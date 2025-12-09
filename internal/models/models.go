@@ -7,15 +7,18 @@ type User struct {
 	Email        string `gorm:"uniqueIndex;not null" json:"email"`
 	PasswordHash string `gorm:"not null" json:"-"`
 
-	CreatedAt time.Time `json:"created_at"`
+	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 }
 
 type Analysis struct {
-	ID         uint      `gorm:"primaryKey" json:"id"`
-	UserID     uint      `gorm:"index" json:"user_id"`
-	UploadedAt time.Time `json:"uploaded_at"`
+	ID     uint `gorm:"primaryKey" json:"id"`
+	UserID uint `gorm:"index" json:"user_id"`
 
-	Findings []Finding `json:"findings"`
+	UploadedAt time.Time `gorm:"autoCreateTime" json:"uploaded_at"`
+	UpdatedAt  time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+
+	Findings []Finding `gorm:"constraint:OnDelete:CASCADE;" json:"findings"`
 }
 
 type Finding struct {
@@ -24,8 +27,11 @@ type Finding struct {
 
 	FilePath string `gorm:"not null" json:"file_path"`
 	Line     int    `gorm:"not null" json:"line"`
-	Value    string `gorm:"not null" json:"value"`
-	RuleID   string `gorm:"not null" json:"rule_id"`
+	// Optional: SARIF иногда даёт диапазон строк
+	LineEnd *int `json:"line_end,omitempty"`
+
+	Value  string `gorm:"not null" json:"value"`
+	RuleID string `gorm:"not null" json:"rule_id"`
 
 	Severity          string  `json:"severity"`
 	ScannerConfidence float64 `json:"scanner_confidence"`
@@ -45,5 +51,6 @@ type Finding struct {
 	HumanVerdict *string `json:"human_verdict"`
 	HumanComment *string `json:"human_comment"`
 
-	CreatedAt time.Time `json:"created_at"`
+	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 }
