@@ -1,19 +1,20 @@
 package analysis
 
 import (
+	"mws-ai/internal/services"
 	"strconv"
-
-	"mws-ai/internal/repository"
 
 	"github.com/gofiber/fiber/v2"
 )
 
 type AnalysisHandler struct {
-	repo repository.AnalysisRepository
+	service *services.AnalysisService
 }
 
-func NewAnalysisHandler(repo repository.AnalysisRepository) *AnalysisHandler {
-	return &AnalysisHandler{repo: repo}
+func NewAnalysisHandler(service *services.AnalysisService) *AnalysisHandler {
+	return &AnalysisHandler{
+		service: service,
+	}
 }
 
 func (h *AnalysisHandler) Get() fiber.Handler {
@@ -24,7 +25,7 @@ func (h *AnalysisHandler) Get() fiber.Handler {
 			return fiber.ErrBadRequest
 		}
 
-		analysis, err := h.repo.GetByID(uint(id))
+		analysis, err := h.service.GetByID(uint(id))
 		if err != nil {
 			return fiber.ErrNotFound
 		}

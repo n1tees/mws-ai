@@ -15,6 +15,7 @@ import (
 	healthHandlers "mws-ai/internal/handlers/health"
 
 	"mws-ai/internal/repository"
+	sarif "mws-ai/internal/sarif"
 	"mws-ai/internal/services"
 	jwtpkg "mws-ai/pkg/jwt"
 )
@@ -34,17 +35,26 @@ func Setup(cfg *config.Config, db *gorm.DB) *fiber.App {
 	userRepo := repository.NewUserRepository(db)
 	apiKeyRepo := repository.NewAPIKeyRepository(db)
 	analysisRepo := repository.NewAnalysisRepository(db)
+	findingRepo := repository.NewFindingRepository(db)
+
+	// INIT PARSER + PIPELINERSER
+	parser := sarif.NewParser()
+	pipeline := &services.DummyPipeline{}
 
 	// INIT SERVICES
 	authService := services.NewAuthService(userRepo, jwtManager)
 	apiKeyService := services.NewAPIKeyService(apiKeyRepo)
-	analysisService := services.NewAnalysisService(analysisRepo)
-
+	analysisService := services.NewAnalysisService(
+		analysisRepo,
+		findingRepo,
+		parser,
+		pipeline,
+	)
 	// INIT HANDLERS
 	authHandler := authHandlers.NewAuthHandler(authService)
 	apiKeyHandler := authHandlers.NewAPIKeyHandler(apiKeyService)
 
-	analysisHandler := analysisHandlers.NewAnalysisHandler(analysisRepo)
+	analysisHandler := analysisHandlers.NewAnalysisHandler(analysisService)
 	uploadHandler := analysisHandlers.NewUploadHandler(analysisService)
 
 	// ROUTER STRUCTURE

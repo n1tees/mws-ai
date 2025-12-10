@@ -46,7 +46,7 @@ func (h *UploadHandler) Upload() fiber.Handler {
 		}
 
 		// создаём запись анализа (service пишет в БД)
-		analysis, err := h.service.CreateAnalysis(uid, filePath)
+		analysis, err := h.service.Upload(uid, filePath)
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 		}
