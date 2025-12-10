@@ -54,3 +54,12 @@ type Finding struct {
 	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 }
+
+type ApiKey struct {
+	ID         uint   `gorm:"primaryKey"`
+	UserID     uint   `gorm:"index"`
+	Hash       string `gorm:"uniqueIndex"`
+	CreatedAt  time.Time
+	LastUsedAt *time.Time
+	Active     bool
+}

@@ -8,12 +8,13 @@ import (
 	"mws-ai/internal/handlers/analysis"
 	"mws-ai/internal/handlers/auth"
 	"mws-ai/internal/handlers/health"
+	"mws-ai/internal/router/middleware"
 )
 
 func Setup(cfg *config.Config, db *gorm.DB) *fiber.App {
 	app := fiber.New()
 
-	DefaultMiddleware(app)
+	middleware.DefaultMiddleware(app)
 
 	api := app.Group("/api")
 

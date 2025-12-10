@@ -1,12 +1,14 @@
-package logger
+package middleware
 
 import (
 	"time"
 
+	"mws-ai/pkg/logger"
+
 	"github.com/gofiber/fiber/v2"
 )
 
-func FiberLogger() fiber.Handler {
+func FiberLoggerMW() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		start := time.Now()
 
@@ -14,7 +16,7 @@ func FiberLogger() fiber.Handler {
 
 		duration := time.Since(start).Milliseconds()
 
-		Log.Info().
+		logger.Log.Info().
 			Str("method", c.Method()).
 			Str("path", c.Path()).
 			Int("status", c.Response().StatusCode()).
