@@ -2,12 +2,17 @@ package analysis
 
 import (
 	"github.com/gofiber/fiber/v2"
-	"gorm.io/gorm"
 )
 
-func ListHandler(db *gorm.DB) fiber.Handler {
+func (h *AnalysisHandler) List() fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		// TODO: список анализов
-		return c.JSON(fiber.Map{"msg": "list analyses"})
+		userID := c.Locals("user_id").(uint)
+
+		analyses, err := h.repo.ListByUser(userID)
+		if err != nil {
+			return fiber.ErrInternalServerError
+		}
+
+		return c.JSON(analyses)
 	}
 }
