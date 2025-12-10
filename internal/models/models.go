@@ -15,6 +15,9 @@ type Analysis struct {
 	ID     uint `gorm:"primaryKey" json:"id"`
 	UserID uint `gorm:"index" json:"user_id"`
 
+	FilePath string `json:"file_path"`
+	Status   string `json:"status"` // pending / processing / done / failed
+
 	UploadedAt time.Time `gorm:"autoCreateTime" json:"uploaded_at"`
 	UpdatedAt  time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 

@@ -10,6 +10,7 @@ type AnalysisRepository interface {
 	Create(analysis *models.Analysis) error
 	GetByID(id uint) (*models.Analysis, error)
 	ListByUser(userID uint) ([]models.Analysis, error)
+	UpdateStatus(id uint, status string) error
 }
 
 type analysisRepository struct {
@@ -48,4 +49,10 @@ func (r *analysisRepository) ListByUser(userID uint) ([]models.Analysis, error) 
 	}
 
 	return list, nil
+}
+
+func (r *analysisRepository) UpdateStatus(id uint, status string) error {
+	return r.db.Model(&models.Analysis{}).
+		Where("id = ?", id).
+		Update("status", status).Error
 }

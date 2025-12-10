@@ -7,7 +7,7 @@ import (
 )
 
 type FindingRepository interface {
-	BulkInsert(findings []models.Finding) error
+	BulkInsert(analysisID uint, findings []models.Finding) error
 	ListByAnalysis(analysisID uint) ([]models.Finding, error)
 	Update(finding *models.Finding) error
 }
@@ -20,10 +20,15 @@ func NewFindingRepository(db *gorm.DB) FindingRepository {
 	return &findingRepository{db: db}
 }
 
-func (r *findingRepository) BulkInsert(findings []models.Finding) error {
+func (r *findingRepository) BulkInsert(analysisID uint, findings []models.Finding) error {
 	if len(findings) == 0 {
 		return nil
 	}
+
+	for i := range findings {
+		findings[i].AnalysisID = analysisID
+	}
+
 	return r.db.Create(&findings).Error
 }
 

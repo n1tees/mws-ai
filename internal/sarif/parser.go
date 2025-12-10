@@ -8,7 +8,14 @@ import (
 	"mws-ai/internal/models"
 )
 
-func ParseFile(path string, analysisID uint) ([]models.Finding, error) {
+type Parser struct{}
+
+func NewParser() *Parser {
+	return &Parser{}
+}
+
+// Реализация интерфейса SarifParser
+func (p *Parser) Parse(path string) ([]models.Finding, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read sarif file: %w", err)
@@ -19,10 +26,10 @@ func ParseFile(path string, analysisID uint) ([]models.Finding, error) {
 		return nil, fmt.Errorf("parse sarif json: %w", err)
 	}
 
-	return ConvertToFindings(sarif, analysisID), nil
+	return ConvertToFindings(sarif), nil
 }
 
-func ConvertToFindings(s Sarif, analysisID uint) []models.Finding {
+func ConvertToFindings(s Sarif) []models.Finding {
 	findings := []models.Finding{}
 
 	if len(s.Runs) == 0 {
@@ -31,11 +38,10 @@ func ConvertToFindings(s Sarif, analysisID uint) []models.Finding {
 
 	for _, result := range s.Runs[0].Results {
 
-		// SARIF может иметь несколько locations (но обычно 1)
 		for _, loc := range result.Locations {
 
 			f := models.Finding{
-				AnalysisID: analysisID,
+				// AnalysisID НЕ заполняем — сервис сделает сам!
 
 				FilePath: loc.PhysicalLocation.ArtifactLocation.URI,
 				Line:     loc.PhysicalLocation.Region.StartLine,
@@ -46,8 +52,6 @@ func ConvertToFindings(s Sarif, analysisID uint) []models.Finding {
 				Severity:          result.Properties.Severity,
 				ScannerConfidence: result.Properties.Confidence,
 
-				// Алгоритм:
-				// RuleVerdict = aiVerdict (предварительно)
 				RuleVerdict: &result.Properties.AIVerdict,
 			}
 
