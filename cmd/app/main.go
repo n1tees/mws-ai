@@ -7,9 +7,19 @@ import (
 
 	"mws-ai/internal/config"
 	"mws-ai/internal/db"
+	"mws-ai/internal/server"
 	"mws-ai/pkg/logger"
 )
 
+// @title MWS AI API
+// @version 1.0
+// @description API для анализа SARIF и определения FP/TP.
+// @BasePath /api
+// @schemes http https
+
+// @securityDefinitions.apikey BearerAuth
+// @in header
+// @name Authorization
 func main() {
 	// config
 	_ = godotenv.Load()
@@ -29,23 +39,13 @@ func main() {
 
 	// db
 	database, err := db.Init(cfg)
+	if err != nil {
+		log.Fatalf("BD error: %v", err)
+	}
+
 	db.Migrate(database)
 
-	// // Fiber
-	// app := fiber.New()
+	// fiber server
+	server.Run(cfg, database)
 
-	// // middleware для логирования HTTP запросов
-	// app.Use(logger.FiberLogger())
-
-	// // тестовый эндпоинт
-	// app.Get("/ping", func(c *fiber.Ctx) error {
-	// 	return c.JSON(fiber.Map{"msg": "pong"})
-	// })
-
-	// // 7. Запускаем сервер
-	// logger.Log.Info().Str("port", cfg.ServerPort).Msg("Server starting")
-
-	// if err := app.Listen(":" + cfg.ServerPort); err != nil {
-	// 	logger.Log.Fatal().Err(err).Msg("Server crashed")
-	//}
 }

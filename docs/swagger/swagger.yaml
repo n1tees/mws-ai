@@ -1,0 +1,209 @@
+basePath: /api
+definitions:
+  dto.AnalysisListItem:
+    properties:
+      id:
+        example: 42
+        type: integer
+      status:
+        example: done
+        type: string
+      uploaded_at:
+        type: string
+    type: object
+  dto.CreateAPIKeyResponse:
+    properties:
+      api_key:
+        example: mws_sk_1234567890abcdef
+        type: string
+    type: object
+  dto.ErrorResponse:
+    properties:
+      message:
+        type: string
+    type: object
+  dto.LoginRequest:
+    properties:
+      email:
+        example: test@example.com
+        type: string
+      password:
+        example: secret123
+        type: string
+    type: object
+  dto.LoginResponse:
+    properties:
+      token:
+        example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        type: string
+    type: object
+  dto.RegisterRequest:
+    properties:
+      email:
+        example: test@example.com
+        type: string
+      password:
+        example: secret123
+        type: string
+    type: object
+  dto.RegisterResponse:
+    properties:
+      email:
+        example: test@example.com
+        type: string
+      id:
+        example: 1
+        type: integer
+    type: object
+  dto.UploadAnalysisResponse:
+    properties:
+      analysis_id:
+        example: 42
+        type: integer
+    type: object
+info:
+  contact: {}
+  description: API для анализа SARIF и определения FP/TP.
+  title: MWS AI API
+  version: "1.0"
+paths:
+  /analysis:
+    get:
+      description: Возвращает список анализов, созданных текущим пользователем
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/dto.AnalysisListItem'
+            type: array
+        "401":
+          description: Неавторизован
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Получить список анализов пользователя
+      tags:
+      - Analysis
+  /analysis/upload:
+    post:
+      consumes:
+      - multipart/form-data
+      description: Принимает SARIF JSON, создаёт Analysis и запускает pipeline обработки
+      parameters:
+      - description: SARIF файл
+        in: formData
+        name: file
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.UploadAnalysisResponse'
+        "400":
+          description: Некорректный файл
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "401":
+          description: Неавторизован
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Загрузить SARIF файл на анализ
+      tags:
+      - Analysis
+  /auth/api-key:
+    post:
+      description: Генерирует новый API-ключ для текущего пользователя
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/dto.CreateAPIKeyResponse'
+        "401":
+          description: Неавторизован
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Создание API-ключа
+      tags:
+      - Auth
+  /auth/login:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Email и пароль
+        in: body
+        name: payload
+        required: true
+        schema:
+          $ref: '#/definitions/dto.LoginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.LoginResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Авторизация пользователя
+      tags:
+      - Auth
+  /auth/register:
+    post:
+      consumes:
+      - application/json
+      description: Создаёт нового пользователя по email и паролю
+      parameters:
+      - description: Данные для регистрации
+        in: body
+        name: payload
+        required: true
+        schema:
+          $ref: '#/definitions/dto.RegisterRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/dto.RegisterResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      summary: Регистрация пользователя
+      tags:
+      - Auth
+  /health:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Проверка состояния сервера
+      tags:
+      - Health
+schemes:
+- http
+- https
+swagger: "2.0"

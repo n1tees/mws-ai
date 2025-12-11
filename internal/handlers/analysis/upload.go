@@ -17,6 +17,18 @@ func NewUploadHandler(service *services.AnalysisService) *UploadHandler {
 	return &UploadHandler{service: service}
 }
 
+// Upload godoc
+// @Summary Загрузить SARIF файл на анализ
+// @Description Принимает SARIF JSON, создаёт Analysis и запускает pipeline обработки
+// @Tags Analysis
+// @Accept multipart/form-data
+// @Produce json
+// @Security BearerAuth
+// @Param file formData file true "SARIF файл"
+// @Success 200 {object} dto.UploadAnalysisResponse
+// @Failure 400 {object} dto.ErrorResponse "Некорректный файл"
+// @Failure 401 {object} dto.ErrorResponse "Неавторизован"
+// @Router /analysis/upload [post]
 func (h *UploadHandler) Upload() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 

@@ -17,6 +17,18 @@ func NewAnalysisHandler(service *services.AnalysisService) *AnalysisHandler {
 	}
 }
 
+// Get godoc
+// @Summary Получить анализ по ID
+// @Description Возвращает Analysis вместе со списком Findings
+// @Tags Analysis
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "ID анализа"
+// @Success 200 {object} dto.AnalysisResponse
+// @Failure 401 {object} dto.ErrorResponse "Неавторизован"
+// @Failure 404 {object} dto.ErrorResponse "Анализ не найден"
+// @Router /analysis/{id} [get]
+
 func (h *AnalysisHandler) Get() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		idStr := c.Params("id")

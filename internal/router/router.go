@@ -1,6 +1,10 @@
 package router
 
 import (
+	_ "mws-ai/docs/swagger"
+
+	swagger "github.com/gofiber/swagger"
+
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -67,8 +71,11 @@ func Setup(cfg *config.Config, db *gorm.DB) *fiber.App {
 	// ROUTER STRUCTURE
 	api := app.Group("/api")
 
-	// health
+	// HEALTH CHECKPOINT
 	api.Get("/health", healthHandlers.HealthHandler())
+
+	// SWAGGER
+	api.Get("/swagger/*", swagger.HandlerDefault)
 
 	// AUTH ROUTES
 	authGroup := api.Group("/auth")
