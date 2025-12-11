@@ -14,12 +14,20 @@ func FiberLoggerMW() fiber.Handler {
 
 		err := c.Next()
 
+		status := c.Response().StatusCode()
+
+		if err != nil {
+			if fe, ok := err.(*fiber.Error); ok {
+				status = fe.Code
+			}
+		}
+
 		duration := time.Since(start).Milliseconds()
 
 		logger.Log.Info().
 			Str("method", c.Method()).
 			Str("path", c.Path()).
-			Int("status", c.Response().StatusCode()).
+			Int("status", status).
 			Int64("duration_ms", duration).
 			Str("ip", c.IP()).
 			Msg("incoming request")
