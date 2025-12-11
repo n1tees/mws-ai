@@ -21,7 +21,6 @@ type Config struct {
 	DBUser     string `env:"DB_USER" envDefault:"postgres"`
 	DBPassword string `env:"DB_PASSWORD" envDefault:"password"`
 	DBName     string `env:"DB_NAME" envDefault:"mws_ai"`
-	DBSSLMode  string `env:"DB_SSL_MODE" envDefault:"disable"`
 
 	UploadDir string `env:"UPLOAD_DIR" envDefault:"uploads"`
 
@@ -52,7 +51,6 @@ func Load() (*Config, []string, error) {
 		DBUser:     getEnvWithWarn("DB_USER", "postgres", &warnings),
 		DBPassword: getEnvWithWarn("DB_PASSWORD", "password", &warnings),
 		DBName:     getEnvWithWarn("DB_NAME", "mws_ai", &warnings),
-		DBSSLMode:  getEnvWithWarn("DB_SSL_MODE", "disable", &warnings),
 
 		// --- FILE STORAGE ---
 		UploadDir: getEnvWithWarn("UPLOAD_DIR", "uploads", &warnings),

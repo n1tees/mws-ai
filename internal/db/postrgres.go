@@ -32,6 +32,7 @@ func Migrate(db *gorm.DB) error {
 		&models.User{},
 		&models.Analysis{},
 		&models.Finding{},
+		&models.ApiKey{},
 	)
 }
 
