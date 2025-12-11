@@ -1,0 +1,104 @@
+### =====================================
+### GLOBAL SETTINGS
+### =====================================
+
+APP_NAME = mws-ai
+MAIN_FILE = cmd/app/main.go
+DOCS_DIR = internal/docs
+
+### =====================================
+### GO COMMANDS
+### =====================================
+
+.PHONY: build
+build:
+	go build -o bin/$(APP_NAME) $(MAIN_FILE)
+
+.PHONY: run
+run:
+	go run $(MAIN_FILE)
+
+.PHONY: tidy
+tidy:
+	go mod tidy
+
+.PHONY: test
+test:
+	go test ./...
+
+.PHONY: fmt
+fmt:
+	go fmt ./...
+
+### =====================================
+### SWAGGER
+### =====================================
+
+.PHONY: swag
+swag:
+	swag init -g $(MAIN_FILE) -o $(DOCS_DIR)
+
+.PHONY: swag-clean
+swag-clean:
+	rm -rf $(DOCS_DIR)
+
+### =====================================
+### DATABASE
+### =====================================
+
+.PHONY: db-up
+db-up:
+	docker run --name mws_postgres \
+		-e POSTGRES_USER=mws \
+		-e POSTGRES_PASSWORD=mws \
+		-e POSTGRES_DB=mws_ai \
+		-p 5435:5432 -d postgres:16
+
+.PHONY: db-down
+db-down:
+	docker stop mws_postgres || true
+	docker rm mws_postgres || true
+
+.PHONY: migrate
+migrate:
+	go run cmd/migrate/migrate.go
+
+### =====================================
+### DOCKER
+### =====================================
+
+.PHONY: docker-build
+docker-build:
+	docker build -t $(APP_NAME):latest .
+
+.PHONY: docker-run
+docker-run:
+	docker run -p 8080:8080 $(APP_NAME):latest
+
+.PHONY: compose-up
+compose-up:
+	docker compose up -d
+
+.PHONY: compose-down
+compose-down:
+	docker compose down
+
+### =====================================
+### UTILS
+### =====================================
+
+.PHONY: clean
+clean:
+	rm -rf bin
+
+.PHONY: help
+help:
+	@echo "Available commands:"
+	@echo "  make build         — build Go binary"
+	@echo "  make run           — run backend"
+	@echo "  make tidy          — tidy go deps"
+	@echo "  make swag          — generate swagger docs"
+	@echo "  make db-up         — start local postgres"
+	@echo "  make db-down       — stop local postgres"
+	@echo "  make docker-build  — build docker image"
+	@echo "  make compose-up    — run docker-compose"
