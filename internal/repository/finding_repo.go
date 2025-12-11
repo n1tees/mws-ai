@@ -7,9 +7,9 @@ import (
 )
 
 type FindingRepository interface {
-	BulkInsert(analysisID uint, findings []models.Finding) error
-	ListByAnalysis(analysisID uint) ([]models.Finding, error)
-	Update(finding *models.Finding) error
+	BulkInsert(analysisID uint, findings []*models.Finding) error
+	ListByAnalysis(analysisID uint) ([]*models.Finding, error)
+	Update(f *models.Finding) error
 }
 
 type findingRepository struct {
@@ -20,20 +20,15 @@ func NewFindingRepository(db *gorm.DB) FindingRepository {
 	return &findingRepository{db: db}
 }
 
-func (r *findingRepository) BulkInsert(analysisID uint, findings []models.Finding) error {
-	if len(findings) == 0 {
-		return nil
+func (r *findingRepository) BulkInsert(analysisID uint, findings []*models.Finding) error {
+	for _, f := range findings {
+		f.AnalysisID = analysisID
 	}
-
-	for i := range findings {
-		findings[i].AnalysisID = analysisID
-	}
-
 	return r.db.Create(&findings).Error
 }
 
-func (r *findingRepository) ListByAnalysis(analysisID uint) ([]models.Finding, error) {
-	var list []models.Finding
+func (r *findingRepository) ListByAnalysis(analysisID uint) ([]*models.Finding, error) {
+	var list []*models.Finding
 
 	err := r.db.
 		Where("analysis_id = ?", analysisID).
@@ -47,6 +42,8 @@ func (r *findingRepository) ListByAnalysis(analysisID uint) ([]models.Finding, e
 	return list, nil
 }
 
-func (r *findingRepository) Update(finding *models.Finding) error {
-	return r.db.Save(finding).Error
+func (r *findingRepository) Update(f *models.Finding) error {
+	return r.db.Model(&models.Finding{}).
+		Where("id = ?", f.ID).
+		Updates(f).Error
 }

@@ -8,6 +8,7 @@ import (
 
 	"mws-ai/internal/config"
 	"mws-ai/internal/router/middleware"
+	"mws-ai/internal/services/clients"
 
 	authHandlers "mws-ai/internal/auth/handlers"
 	authMiddleware "mws-ai/internal/auth/middleware"
@@ -37,9 +38,15 @@ func Setup(cfg *config.Config, db *gorm.DB) *fiber.App {
 	analysisRepo := repository.NewAnalysisRepository(db)
 	findingRepo := repository.NewFindingRepository(db)
 
-	// INIT PARSER + PIPELINERSER
+	// INIT PARSER
 	parser := sarif.NewParser()
-	pipeline := &services.DummyPipeline{}
+
+	// INIT CLIENTS 4 PIPELINE
+	heuristicClient := clients.NewHeuristicClient(cfg.HeuristicURL)
+	mlClient := clients.NewMLClient(cfg.MLURL)
+	llmClient := clients.NewLLMClient(cfg.LLMURL)
+	// INIT PIPELINE EXECUTOR
+	pipeline := services.NewPipeline(heuristicClient, mlClient, llmClient)
 
 	// INIT SERVICES
 	authService := services.NewAuthService(userRepo, jwtManager)

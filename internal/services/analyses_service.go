@@ -8,14 +8,12 @@ import (
 	"mws-ai/pkg/logger"
 )
 
+// Interfaces
 type SarifParser interface {
 	Parse(filePath string) ([]models.Finding, error)
 }
 
-type PipelineExecutor interface {
-	Run(analysisID uint) error
-}
-
+// AnalysisService
 type AnalysisService struct {
 	repo        repository.AnalysisRepository
 	findingRepo repository.FindingRepository
@@ -37,7 +35,7 @@ func NewAnalysisService(
 	}
 }
 
-// Upload: создаёт анализ и запускает pipeline
+// Public API: Upload
 func (s *AnalysisService) Upload(userID uint, filePath string) (*models.Analysis, error) {
 
 	analysis := &models.Analysis{
@@ -47,7 +45,7 @@ func (s *AnalysisService) Upload(userID uint, filePath string) (*models.Analysis
 		FilePath:   filePath,
 	}
 
-	// 1. Сохраняем analysis в БД
+	// Создаём Analysis
 	if err := s.repo.Create(analysis); err != nil {
 		return nil, err
 	}
@@ -56,12 +54,13 @@ func (s *AnalysisService) Upload(userID uint, filePath string) (*models.Analysis
 		Uint("analysis_id", analysis.ID).
 		Msg("Analysis created, starting pipeline...")
 
-	// 2. Запускаем асинхронный pipeline
+	// Асинхронный запуск
 	go s.processAnalysis(analysis.ID, filePath)
 
 	return analysis, nil
 }
 
+// Public API: Queries
 func (s *AnalysisService) GetByID(id uint) (*models.Analysis, error) {
 	return s.repo.GetByID(id)
 }
@@ -70,47 +69,83 @@ func (s *AnalysisService) ListByUser(userID uint) ([]models.Analysis, error) {
 	return s.repo.ListByUser(userID)
 }
 
-// processAnalysis запускается в фоне
+// INTERNAL: Background worker
 func (s *AnalysisService) processAnalysis(analysisID uint, filePath string) {
 
-	// Обновляем статус на "processing"
 	_ = s.repo.UpdateStatus(analysisID, "processing")
 
-	// 1. Парсим SARIF
-	findings, err := s.sarifParser.Parse(filePath)
+	// Parse SARIF
+	parsedFindings, err := s.sarifParser.Parse(filePath)
 	if err != nil {
-		logger.Log.Error().Err(err).
-			Uint("analysis_id", analysisID).
-			Msg("SARIF parsing failed")
-
+		logger.Log.Error().Err(err).Uint("analysis_id", analysisID).Msg("SARIF parsing failed")
 		_ = s.repo.UpdateStatus(analysisID, "failed")
 		return
 	}
 
-	// 2. Сохраняем findings
+	// Convert slice of values → slice of pointers
+	findings := make([]*models.Finding, len(parsedFindings))
+	for i := range parsedFindings {
+		findings[i] = &parsedFindings[i]
+		findings[i].AnalysisID = analysisID
+	}
+
+	// Bulk insert
 	if err := s.findingRepo.BulkInsert(analysisID, findings); err != nil {
-		logger.Log.Error().Err(err).
-			Uint("analysis_id", analysisID).
-			Msg("Saving findings failed")
-
+		logger.Log.Error().Err(err).Uint("analysis_id", analysisID).Msg("Saving findings failed")
 		_ = s.repo.UpdateStatus(analysisID, "failed")
 		return
 	}
 
-	// 3. Запустить pipeline (heuristic + ml + llm)
-	if err := s.pipeline.Run(analysisID); err != nil {
-		logger.Log.Error().Err(err).
-			Uint("analysis_id", analysisID).
-			Msg("Pipeline failed")
+	// Summary accumulators
+	tpCount := 0
+	fpCount := 0
+	var confSum float64
+	var confCount int
 
-		_ = s.repo.UpdateStatus(analysisID, "failed")
-		return
+	// Process pipeline
+	for _, f := range findings {
+
+		if err := s.pipeline.Process(f); err != nil {
+			logger.Log.Error().Err(err).Uint("finding_id", f.ID).Msg("Pipeline failed")
+		}
+
+		if err := s.findingRepo.Update(f); err != nil {
+			logger.Log.Error().Err(err).Uint("finding_id", f.ID).Msg("Failed to update finding")
+		}
+
+		if f.FinalVerdict != nil {
+			if *f.FinalVerdict == "TP" {
+				tpCount++
+			} else if *f.FinalVerdict == "FP" {
+				fpCount++
+			}
+		}
+
+		if f.FinalConfidence != nil {
+			confSum += *f.FinalConfidence
+			confCount++
+		}
 	}
 
-	// 4. Обновляем статус на "done"
+	// COMPUTE FINAL SUMMARY
+	finalVerdict := "FP"
+	if tpCount > fpCount {
+		finalVerdict = "TP"
+	}
+
+	var avgConf *float64
+	if confCount > 0 {
+		c := confSum / float64(confCount)
+		avgConf = &c
+	}
+
+	// Save summary
+	if err := s.repo.UpdateSummary(analysisID, finalVerdict, tpCount, fpCount, avgConf); err != nil {
+		logger.Log.Error().Err(err).Uint("analysis_id", analysisID).Msg("Failed to update summary")
+	}
+
+	// DONE
 	_ = s.repo.UpdateStatus(analysisID, "done")
 
-	logger.Log.Info().
-		Uint("analysis_id", analysisID).
-		Msg("Analysis successfully processed")
+	logger.Log.Info().Uint("analysis_id", analysisID).Msg("Analysis successfully processed")
 }

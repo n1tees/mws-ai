@@ -11,6 +11,7 @@ type AnalysisRepository interface {
 	GetByID(id uint) (*models.Analysis, error)
 	ListByUser(userID uint) ([]models.Analysis, error)
 	UpdateStatus(id uint, status string) error
+	UpdateSummary(id uint, verdict string, tp int, fp int, conf *float64) error
 }
 
 type analysisRepository struct {
@@ -55,4 +56,21 @@ func (r *analysisRepository) UpdateStatus(id uint, status string) error {
 	return r.db.Model(&models.Analysis{}).
 		Where("id = ?", id).
 		Update("status", status).Error
+}
+
+func (r *analysisRepository) UpdateSummary(
+	id uint,
+	verdict string,
+	tp int,
+	fp int,
+	conf *float64,
+) error {
+	return r.db.Model(&models.Analysis{}).
+		Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"final_verdict":    verdict,
+			"tp_count":         tp,
+			"fp_count":         fp,
+			"final_confidence": conf,
+		}).Error
 }

@@ -22,6 +22,12 @@ type Analysis struct {
 	UpdatedAt  time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 
 	Findings []Finding `gorm:"constraint:OnDelete:CASCADE;" json:"findings"`
+
+	// SUMMARY FIELDS
+	FinalVerdict    *string  `json:"final_verdict"`
+	TPCount         int      `json:"tp_count"`
+	FPCount         int      `json:"fp_count"`
+	FinalConfidence *float64 `json:"final_confidence"`
 }
 
 type Finding struct {
