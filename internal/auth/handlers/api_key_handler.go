@@ -2,6 +2,7 @@ package auth
 
 import (
 	"mws-ai/internal/services"
+	"mws-ai/pkg/logger"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -25,14 +26,43 @@ func NewAPIKeyHandler(apiKeys *services.APIKeyService) *APIKeyHandler {
 // @Router /auth/api-key [post]
 func (h *APIKeyHandler) CreateAPIKey() fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		userID := c.Locals("user_id").(uint)
+		userIDRaw := c.Locals("user_id")
+		userID, ok := userIDRaw.(uint)
+		if !ok {
+			logger.Log.Warn().
+				Str("component", "auth").
+				Str("handler", "CreateAPIKey").
+				Interface("user_id_raw", userIDRaw).
+				Msg("user_id missing or invalid in context")
+
+			return fiber.ErrUnauthorized
+		}
+
+		logger.Log.Debug().
+			Str("component", "auth").
+			Str("handler", "CreateAPIKey").
+			Uint("user_id", userID).
+			Msg("API key generation requested")
 
 		rawKey, err := h.apiKeys.Generate(userID)
 		if err != nil {
+			logger.Log.Error().
+				Err(err).
+				Str("component", "auth").
+				Str("handler", "CreateAPIKey").
+				Uint("user_id", userID).
+				Msg("failed to generate API key")
+
 			return fiber.ErrInternalServerError
 		}
 
-		return c.JSON(fiber.Map{
+		logger.Log.Info().
+			Str("component", "auth").
+			Str("handler", "CreateAPIKey").
+			Uint("user_id", userID).
+			Msg("API key generated successfully")
+
+		return c.Status(fiber.StatusCreated).JSON(fiber.Map{
 			"api_key": rawKey,
 		})
 	}

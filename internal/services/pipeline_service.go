@@ -39,20 +39,41 @@ func NewPipeline(heuristic HeuristicClient, ml MLClient, llm LLMClient) Pipeline
 // Основная логика обработки одного finding
 func (p *pipelineExecutor) Process(f *models.Finding) error {
 
+	log := logger.Log.With().
+		Str("service", "pipeline").
+		Str("method", "Process").
+		Uint("finding_id", f.ID).
+		Logger()
+
+	log.Debug().Msg("pipeline processing started")
+
 	//---------------------------------------------------
 	// 1. HEURISTIC (жёсткий фильтр)
 	//---------------------------------------------------
 	rVerdict, rConf, err := p.heuristic.Evaluate(*f)
 	if err != nil {
-		logger.Log.Warn().Err(err).Msg("Heuristic failed — continuing to ML")
+		log.Warn().
+			Err(err).
+			Msg("heuristic evaluation failed, continuing to ML")
 	} else {
 		f.RuleVerdict = &rVerdict
 		f.RuleConfidence = &rConf
+
+		log.Debug().
+			Str("verdict", rVerdict).
+			Float64("confidence", rConf).
+			Msg("heuristic verdict received")
 
 		// Если эвристика уверена (FP или TP) → завершаем анализ
 		if rVerdict == "FP" || rVerdict == "TP" {
 			f.FinalVerdict = &rVerdict
 			f.FinalConfidence = &rConf
+
+			log.Debug().
+				Str("final_verdict", rVerdict).
+				Float64("final_confidence", rConf).
+				Msg("final verdict decided by heuristic")
+
 			return nil
 		}
 	}
@@ -62,7 +83,9 @@ func (p *pipelineExecutor) Process(f *models.Finding) error {
 	//---------------------------------------------------
 	mlVerdict, mlConf, err := p.ml.Predict(*f)
 	if err != nil {
-		logger.Log.Warn().Err(err).Msg("ML failed — fallback to heuristic")
+		log.Warn().
+			Err(err).
+			Msg("ML prediction failed, fallback to default FP")
 
 		// Если ML упал и эвристика не дала verdict → FP по умолчанию
 		defaultVerdict := "FP"
@@ -70,11 +93,22 @@ func (p *pipelineExecutor) Process(f *models.Finding) error {
 
 		f.FinalVerdict = &defaultVerdict
 		f.FinalConfidence = &defaultConf
+
+		log.Debug().
+			Str("final_verdict", defaultVerdict).
+			Float64("final_confidence", defaultConf).
+			Msg("final verdict set by fallback")
+
 		return nil
 	}
 
 	f.MlVerdict = &mlVerdict
 	f.MlConfidence = &mlConf
+
+	log.Debug().
+		Str("verdict", mlVerdict).
+		Float64("confidence", mlConf).
+		Msg("ML verdict received")
 
 	//---------------------------------------------------
 	// Если ML дал уверенность >= 0.7 → это итог
@@ -82,6 +116,12 @@ func (p *pipelineExecutor) Process(f *models.Finding) error {
 	if mlConf >= 0.7 {
 		f.FinalVerdict = &mlVerdict
 		f.FinalConfidence = &mlConf
+
+		log.Debug().
+			Str("final_verdict", mlVerdict).
+			Float64("final_confidence", mlConf).
+			Msg("final verdict decided by ML")
+
 		return nil
 	}
 
@@ -90,14 +130,27 @@ func (p *pipelineExecutor) Process(f *models.Finding) error {
 	//---------------------------------------------------
 	llmVerdict, explanation, err := p.llm.Analyze(*f)
 	if err != nil {
-		logger.Log.Warn().Err(err).Msg("LLM failed — using ML verdict")
+		log.Warn().
+			Err(err).
+			Msg("LLM analysis failed, using ML verdict")
+
 		f.FinalVerdict = &mlVerdict
 		f.FinalConfidence = &mlConf
+
+		log.Debug().
+			Str("final_verdict", mlVerdict).
+			Float64("final_confidence", mlConf).
+			Msg("final verdict taken from ML after LLM failure")
+
 		return nil
 	}
 
 	f.LlmVerdict = &llmVerdict
 	f.LlmExplanation = &explanation
+
+	log.Debug().
+		Str("verdict", llmVerdict).
+		Msg("LLM verdict received")
 
 	//---------------------------------------------------
 	// Final verdict = LLM verdict
@@ -107,6 +160,11 @@ func (p *pipelineExecutor) Process(f *models.Finding) error {
 	// Confidence = усреднение эвристики и ML
 	conf := computeFinalConfidence(f)
 	f.FinalConfidence = &conf
+
+	log.Debug().
+		Str("final_verdict", llmVerdict).
+		Float64("final_confidence", conf).
+		Msg("final verdict decided by LLM")
 
 	return nil
 }
@@ -124,8 +182,6 @@ func computeFinalConfidence(f *models.Finding) float64 {
 		count++
 	}
 
-	// LLM confidence у нас нет → считаем как 1.0 или пропускаем
-	// Лучше пропускать, иначе будет ложное усиление
 	if count == 0 {
 		return 0.0
 	}
@@ -140,11 +196,22 @@ func NewDummyPipeline() PipelineExecutor {
 }
 
 func (p *DummyPipeline) Process(f *models.Finding) error {
+	log := logger.Log.With().
+		Str("service", "pipeline").
+		Str("method", "DummyProcess").
+		Uint("finding_id", f.ID).
+		Logger()
+
 	verdict := "FP"
 	conf := 0.5
 
 	f.FinalVerdict = &verdict
 	f.FinalConfidence = &conf
+
+	log.Debug().
+		Str("final_verdict", verdict).
+		Float64("final_confidence", conf).
+		Msg("dummy pipeline applied")
 
 	return nil
 }

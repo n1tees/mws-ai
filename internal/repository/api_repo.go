@@ -1,8 +1,11 @@
 package repository
 
 import (
-	"mws-ai/internal/models"
+	"errors"
 	"time"
+
+	"mws-ai/internal/models"
+	"mws-ai/pkg/logger"
 
 	"gorm.io/gorm"
 )
@@ -22,13 +25,45 @@ func NewAPIKeyRepository(db *gorm.DB) APIKeyRepository {
 }
 
 func (r *apiKeyRepository) Create(key *models.ApiKey) error {
-	return r.db.Create(key).Error
+	if err := r.db.Create(key).Error; err != nil {
+		logger.Log.Error().
+			Str("repo", "api_key").
+			Str("method", "Create").
+			Err(err).
+			Msg("failed to create API key")
+
+		return err
+	}
+
+	logger.Log.Debug().
+		Str("repo", "api_key").
+		Str("method", "Create").
+		Uint("api_key_id", key.ID).
+		Uint("user_id", key.UserID).
+		Msg("API key created")
+
+	return nil
 }
 
 func (r *apiKeyRepository) FindByHash(hash string) (*models.ApiKey, error) {
 	var key models.ApiKey
-	err := r.db.Where("hash = ?", hash).First(&key).Error
+
+	err := r.db.
+		Where("hash = ?", hash).
+		First(&key).
+		Error
+
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+
+		logger.Log.Error().
+			Str("repo", "api_key").
+			Str("method", "FindByHash").
+			Err(err).
+			Msg("failed to find API key by hash")
+
 		return nil, err
 	}
 
@@ -36,8 +71,28 @@ func (r *apiKeyRepository) FindByHash(hash string) (*models.ApiKey, error) {
 }
 
 func (r *apiKeyRepository) UpdateLastUsed(id uint, t *time.Time) error {
-	return r.db.Model(&models.ApiKey{}).
+	res := r.db.Model(&models.ApiKey{}).
 		Where("id = ?", id).
-		Update("last_used_at", t).
-		Error
+		Update("last_used_at", t)
+
+	if res.Error != nil {
+		logger.Log.Error().
+			Str("repo", "api_key").
+			Str("method", "UpdateLastUsed").
+			Uint("api_key_id", id).
+			Err(res.Error).
+			Msg("failed to update API key last_used_at")
+
+		return res.Error
+	}
+
+	if res.RowsAffected == 0 {
+		logger.Log.Debug().
+			Str("repo", "api_key").
+			Str("method", "UpdateLastUsed").
+			Uint("api_key_id", id).
+			Msg("no API key found to update last_used_at")
+	}
+
+	return nil
 }

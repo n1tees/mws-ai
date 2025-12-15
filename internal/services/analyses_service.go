@@ -38,6 +38,15 @@ func NewAnalysisService(
 // Public API: Upload
 func (s *AnalysisService) Upload(userID uint, filePath string) (*models.Analysis, error) {
 
+	log := logger.Log.With().
+		Str("service", "analysis").
+		Str("method", "Upload").
+		Uint("user_id", userID).
+		Str("file_path", filePath).
+		Logger()
+
+	log.Debug().Msg("upload analysis request received")
+
 	analysis := &models.Analysis{
 		UserID:     userID,
 		UploadedAt: time.Now(),
@@ -47,12 +56,16 @@ func (s *AnalysisService) Upload(userID uint, filePath string) (*models.Analysis
 
 	// Создаём Analysis
 	if err := s.repo.Create(analysis); err != nil {
+		log.Error().
+			Err(err).
+			Msg("failed to create analysis")
+
 		return nil, err
 	}
 
-	logger.Log.Info().
+	log.Info().
 		Uint("analysis_id", analysis.ID).
-		Msg("Analysis created, starting pipeline...")
+		Msg("analysis created, starting pipeline")
 
 	// Асинхронный запуск
 	go s.processAnalysis(analysis.ID, filePath)
@@ -72,15 +85,33 @@ func (s *AnalysisService) ListByUser(userID uint) ([]models.Analysis, error) {
 // INTERNAL: Background worker
 func (s *AnalysisService) processAnalysis(analysisID uint, filePath string) {
 
+	start := time.Now()
+
+	log := logger.Log.With().
+		Str("service", "analysis").
+		Str("method", "processAnalysis").
+		Uint("analysis_id", analysisID).
+		Str("file_path", filePath).
+		Logger()
+
+	log.Info().Msg("analysis processing started")
+
 	_ = s.repo.UpdateStatus(analysisID, "processing")
 
 	// Parse SARIF
 	parsedFindings, err := s.sarifParser.Parse(filePath)
 	if err != nil {
-		logger.Log.Error().Err(err).Uint("analysis_id", analysisID).Msg("SARIF parsing failed")
+		log.Error().
+			Err(err).
+			Msg("SARIF parsing failed")
+
 		_ = s.repo.UpdateStatus(analysisID, "failed")
 		return
 	}
+
+	log.Debug().
+		Int("findings_count", len(parsedFindings)).
+		Msg("SARIF parsed successfully")
 
 	// Convert slice of values → slice of pointers
 	findings := make([]*models.Finding, len(parsedFindings))
@@ -91,10 +122,17 @@ func (s *AnalysisService) processAnalysis(analysisID uint, filePath string) {
 
 	// Bulk insert
 	if err := s.findingRepo.BulkInsert(analysisID, findings); err != nil {
-		logger.Log.Error().Err(err).Uint("analysis_id", analysisID).Msg("Saving findings failed")
+		log.Error().
+			Err(err).
+			Msg("saving findings failed")
+
 		_ = s.repo.UpdateStatus(analysisID, "failed")
 		return
 	}
+
+	log.Debug().
+		Int("findings_count", len(findings)).
+		Msg("findings saved")
 
 	// Summary accumulators
 	tpCount := 0
@@ -106,11 +144,19 @@ func (s *AnalysisService) processAnalysis(analysisID uint, filePath string) {
 	for _, f := range findings {
 
 		if err := s.pipeline.Process(f); err != nil {
-			logger.Log.Error().Err(err).Uint("finding_id", f.ID).Msg("Pipeline failed")
+			logger.Log.Error().
+				Err(err).
+				Uint("analysis_id", analysisID).
+				Uint("finding_id", f.ID).
+				Msg("pipeline processing failed")
 		}
 
 		if err := s.findingRepo.Update(f); err != nil {
-			logger.Log.Error().Err(err).Uint("finding_id", f.ID).Msg("Failed to update finding")
+			logger.Log.Error().
+				Err(err).
+				Uint("analysis_id", analysisID).
+				Uint("finding_id", f.ID).
+				Msg("failed to update finding")
 		}
 
 		if f.FinalVerdict != nil {
@@ -127,6 +173,12 @@ func (s *AnalysisService) processAnalysis(analysisID uint, filePath string) {
 		}
 	}
 
+	log.Debug().
+		Int("tp_count", tpCount).
+		Int("fp_count", fpCount).
+		Int("confidence_count", confCount).
+		Msg("pipeline processing finished")
+
 	// COMPUTE FINAL SUMMARY
 	finalVerdict := "FP"
 	if tpCount > fpCount {
@@ -141,11 +193,18 @@ func (s *AnalysisService) processAnalysis(analysisID uint, filePath string) {
 
 	// Save summary
 	if err := s.repo.UpdateSummary(analysisID, finalVerdict, tpCount, fpCount, avgConf); err != nil {
-		logger.Log.Error().Err(err).Uint("analysis_id", analysisID).Msg("Failed to update summary")
+		log.Error().
+			Err(err).
+			Msg("failed to update analysis summary")
 	}
 
 	// DONE
 	_ = s.repo.UpdateStatus(analysisID, "done")
 
-	logger.Log.Info().Uint("analysis_id", analysisID).Msg("Analysis successfully processed")
+	log.Info().
+		Str("final_verdict", finalVerdict).
+		Int("tp", tpCount).
+		Int("fp", fpCount).
+		Dur("duration", time.Since(start)).
+		Msg("analysis successfully processed")
 }
