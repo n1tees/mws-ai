@@ -11,6 +11,8 @@ type FindingRepository interface {
 	BulkInsert(analysisID uint, findings []*models.Finding) error
 	ListByAnalysis(analysisID uint) ([]*models.Finding, error)
 	Update(f *models.Finding) error
+	UpdateStatus(id uint, status string) error
+	UpdateFields(id uint, fields map[string]interface{}) error
 }
 
 type findingRepository struct {
@@ -112,4 +114,18 @@ func (r *findingRepository) Update(f *models.Finding) error {
 	}
 
 	return nil
+}
+
+func (r *findingRepository) UpdateFields(id uint, fields map[string]interface{}) error {
+	return r.db.Model(&models.Finding{}).
+		Where("id = ?", id).
+		Updates(fields).
+		Error
+}
+
+func (r *findingRepository) UpdateStatus(id uint, status string) error {
+	return r.db.Model(&models.Finding{}).
+		Where("id = ?", id).
+		Update("status", status).
+		Error
 }

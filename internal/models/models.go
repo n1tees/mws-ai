@@ -36,8 +36,7 @@ type Finding struct {
 
 	FilePath string `gorm:"not null" json:"file_path"`
 	Line     int    `gorm:"not null" json:"line"`
-	// Optional: SARIF иногда даёт диапазон строк
-	LineEnd *int `json:"line_end,omitempty"`
+	LineEnd  *int   `json:"line_end,omitempty"`
 
 	Value  string `gorm:"not null" json:"value"`
 	RuleID string `gorm:"not null" json:"rule_id"`
@@ -45,20 +44,29 @@ type Finding struct {
 	Severity          string  `json:"severity"`
 	ScannerConfidence float64 `json:"scanner_confidence"`
 
-	RuleVerdict    *string  `json:"rule_verdict"`
-	RuleConfidence *float64 `json:"rule_confidence"`
+	// Heuristic results
+	RuleVerdict      *string  `json:"rule_verdict"`
+	RuleConfidence   *float64 `json:"rule_confidence"`
+	HeuristicReasons []string `gorm:"type:text[]" json:"heuristic_reasons"` // optional, можно оставить пустым
 
+	// ML results
 	MlVerdict    *string  `json:"ml_verdict"`
 	MlConfidence *float64 `json:"ml_confidence"`
 
-	LlmVerdict     *string `json:"llm_verdict"`
-	LlmExplanation *string `json:"llm_explanation"`
+	// LLM results
+	LlmVerdict     *string  `json:"llm_verdict"`
+	LlmConfidence  *float64 `json:"llm_confidence"`
+	LlmExplanation *string  `json:"llm_explanation"`
 
+	// Final
 	FinalVerdict    *string  `json:"final_verdict"`
 	FinalConfidence *float64 `json:"final_confidence"`
 
+	// Human review
 	HumanVerdict *string `json:"human_verdict"`
 	HumanComment *string `json:"human_comment"`
+
+	Status string `gorm:"type:varchar(32);default:'pending'" json:"status"`
 
 	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt time.Time `gorm:"autoUpdateTime" json:"updated_at"`
