@@ -50,7 +50,7 @@ func Setup(cfg *config.Config, db *gorm.DB) *fiber.App {
 	mlClient := clients.NewMLClient(cfg.MLURL)
 	llmClient := clients.NewLLMClient(cfg.LLMURL)
 	// INIT PIPELINE EXECUTOR
-	pipeline := services.NewPipeline(heuristicClient, mlClient, llmClient)
+	pipeline := services.NewPipeline(heuristicClient, mlClient, llmClient, findingRepo)
 
 	// INIT SERVICES
 	authService := services.NewAuthService(userRepo, jwtManager)

@@ -1,217 +1,166 @@
 package services
 
 import (
+	"fmt"
+
 	"mws-ai/internal/models"
+	"mws-ai/internal/repository"
+	"mws-ai/internal/services/clients"
 	"mws-ai/pkg/logger"
 )
 
-// Интерфейсы для вызова внешних сервисов
-type HeuristicClient interface {
-	Evaluate(f models.Finding) (verdict string, confidence float64, err error)
-}
-
-type MLClient interface {
-	Predict(f models.Finding) (verdict string, confidence float64, err error)
-}
-
-type LLMClient interface {
-	Analyze(f models.Finding) (verdict string, explanation string, err error)
-}
-
 type PipelineExecutor interface {
-	Process(f *models.Finding) error
+	Process(findings []*models.Finding) error
 }
 
 type pipelineExecutor struct {
-	heuristic HeuristicClient
-	ml        MLClient
-	llm       LLMClient
+	heuristic   clients.HeuristicClient
+	ml          clients.MLClient
+	llm         clients.LLMClient
+	findingRepo repository.FindingRepository
 }
 
-func NewPipeline(heuristic HeuristicClient, ml MLClient, llm LLMClient) PipelineExecutor {
+func NewPipeline(
+	heuristic clients.HeuristicClient,
+	ml clients.MLClient,
+	llm clients.LLMClient,
+	findingRepo repository.FindingRepository,
+) PipelineExecutor {
 	return &pipelineExecutor{
-		heuristic: heuristic,
-		ml:        ml,
-		llm:       llm,
+		heuristic:   heuristic,
+		ml:          ml,
+		llm:         llm,
+		findingRepo: findingRepo,
 	}
 }
 
-// Основная логика обработки одного finding
-func (p *pipelineExecutor) Process(f *models.Finding) error {
+//
+// ========== MAIN PIPELINE ==========
+//
 
-	log := logger.Log.With().
-		Str("service", "pipeline").
-		Str("method", "Process").
-		Uint("finding_id", f.ID).
-		Logger()
+func (p *pipelineExecutor) Process(findings []*models.Finding) error {
 
-	log.Debug().Msg("pipeline processing started")
-
-	//---------------------------------------------------
-	// 1. HEURISTIC (жёсткий фильтр)
-	//---------------------------------------------------
-	rVerdict, rConf, err := p.heuristic.Evaluate(*f)
+	// ===============================
+	// 1. HEURISTIC
+	// ===============================
+	heuristicResults, err := p.heuristic.Analyze(findings)
 	if err != nil {
-		log.Warn().
-			Err(err).
-			Msg("heuristic evaluation failed, continuing to ML")
-	} else {
-		f.RuleVerdict = &rVerdict
-		f.RuleConfidence = &rConf
+		logger.Log.Error().Err(err).Msg("Heuristic batch failed")
+		return fmt.Errorf("heuristic failed: %w", err)
+	}
 
-		log.Debug().
-			Str("verdict", rVerdict).
-			Float64("confidence", rConf).
-			Msg("heuristic verdict received")
+	var toML []*models.Finding
 
-		// Если эвристика уверена (FP или TP) → завершаем анализ
-		if rVerdict == "FP" || rVerdict == "TP" {
-			f.FinalVerdict = &rVerdict
-			f.FinalConfidence = &rConf
-
-			log.Debug().
-				Str("final_verdict", rVerdict).
-				Float64("final_confidence", rConf).
-				Msg("final verdict decided by heuristic")
-
-			return nil
+	for _, f := range findings {
+		res, ok := heuristicResults[f.ID]
+		if !ok {
+			logger.Log.Warn().Uint("finding_id", f.ID).Msg("Missing heuristic result")
+			continue
 		}
+
+		f.RuleVerdict = &res.Verdict
+		f.RuleConfidence = &res.Confidence
+		p.saveFinding(f)
+
+		// STOP RULE: strong TP
+		if res.Verdict == "TP" && res.Confidence >= 0.8 {
+			// финальный вывод
+			f.FinalVerdict = &res.Verdict
+			f.FinalConfidence = &res.Confidence
+			p.saveFinding(f)
+
+			logger.Log.Info().Uint("id", f.ID).Msg("Heuristic says strong TP → STOP")
+			continue
+		}
+
+		toML = append(toML, f)
 	}
 
-	//---------------------------------------------------
-	// 2. ML (основной модуль)
-	//---------------------------------------------------
-	mlVerdict, mlConf, err := p.ml.Predict(*f)
+	if len(toML) == 0 {
+		return nil
+	}
+
+	// ===============================
+	// 2. ML
+	// ===============================
+	mlResults, err := p.ml.Predict(toML)
 	if err != nil {
-		log.Warn().
-			Err(err).
-			Msg("ML prediction failed, fallback to default FP")
+		logger.Log.Error().Err(err).Msg("ML batch failed")
+		return fmt.Errorf("ml failed: %w", err)
+	}
 
-		// Если ML упал и эвристика не дала verdict → FP по умолчанию
-		defaultVerdict := "FP"
-		defaultConf := 0.5
+	var toLLM []*models.Finding
 
-		f.FinalVerdict = &defaultVerdict
-		f.FinalConfidence = &defaultConf
+	for _, f := range toML {
+		res, ok := mlResults[f.ID]
+		if !ok {
+			logger.Log.Warn().Uint("finding_id", f.ID).Msg("Missing ML result")
+			continue
+		}
 
-		log.Debug().
-			Str("final_verdict", defaultVerdict).
-			Float64("final_confidence", defaultConf).
-			Msg("final verdict set by fallback")
+		verdict := "FP"
+		if res.Verdict {
+			verdict = "TP"
+		}
 
+		f.MlVerdict = &verdict
+		f.MlConfidence = &res.Confidence
+		p.saveFinding(f)
+
+		// STOP RULE: ML confident TP
+		if res.Verdict && res.Confidence >= 0.9 {
+			f.FinalVerdict = &verdict
+			f.FinalConfidence = &res.Confidence
+			p.saveFinding(f)
+
+			logger.Log.Info().Uint("id", f.ID).Msg("ML says strong TP → STOP")
+			continue
+		}
+
+		toLLM = append(toLLM, f)
+	}
+
+	if len(toLLM) == 0 {
 		return nil
 	}
 
-	f.MlVerdict = &mlVerdict
-	f.MlConfidence = &mlConf
-
-	log.Debug().
-		Str("verdict", mlVerdict).
-		Float64("confidence", mlConf).
-		Msg("ML verdict received")
-
-	//---------------------------------------------------
-	// Если ML дал уверенность >= 0.7 → это итог
-	//---------------------------------------------------
-	if mlConf >= 0.7 {
-		f.FinalVerdict = &mlVerdict
-		f.FinalConfidence = &mlConf
-
-		log.Debug().
-			Str("final_verdict", mlVerdict).
-			Float64("final_confidence", mlConf).
-			Msg("final verdict decided by ML")
-
-		return nil
-	}
-
-	//---------------------------------------------------
-	// 3. ML < 0.7 → LLM
-	//---------------------------------------------------
-	llmVerdict, explanation, err := p.llm.Analyze(*f)
+	// ===============================
+	// 3. LLM
+	// ===============================
+	llmResults, err := p.llm.AnalyzeBatch(toLLM)
 	if err != nil {
-		log.Warn().
-			Err(err).
-			Msg("LLM analysis failed, using ML verdict")
-
-		f.FinalVerdict = &mlVerdict
-		f.FinalConfidence = &mlConf
-
-		log.Debug().
-			Str("final_verdict", mlVerdict).
-			Float64("final_confidence", mlConf).
-			Msg("final verdict taken from ML after LLM failure")
-
-		return nil
+		logger.Log.Error().Err(err).Msg("LLM batch failed")
+		return fmt.Errorf("llm failed: %w", err)
 	}
 
-	f.LlmVerdict = &llmVerdict
-	f.LlmExplanation = &explanation
+	for _, f := range toLLM {
+		res, ok := llmResults[f.ID]
+		if !ok {
+			logger.Log.Warn().Uint("finding_id", f.ID).Msg("Missing LLM result")
+			continue
+		}
 
-	log.Debug().
-		Str("verdict", llmVerdict).
-		Msg("LLM verdict received")
+		f.LlmVerdict = &res.Verdict
+		f.LlmConfidence = &res.Confidence
+		f.LlmExplanation = &res.Explanation
 
-	//---------------------------------------------------
-	// Final verdict = LLM verdict
-	//---------------------------------------------------
-	f.FinalVerdict = &llmVerdict
+		f.FinalVerdict = &res.Verdict
+		f.FinalConfidence = &res.Confidence
 
-	// Confidence = усреднение эвристики и ML
-	conf := computeFinalConfidence(f)
-	f.FinalConfidence = &conf
-
-	log.Debug().
-		Str("final_verdict", llmVerdict).
-		Float64("final_confidence", conf).
-		Msg("final verdict decided by LLM")
+		p.saveFinding(f)
+	}
 
 	return nil
 }
 
-func computeFinalConfidence(f *models.Finding) float64 {
-	sum := 0.0
-	count := 0
+//
+// ========== HELPERS ==========
+//
 
-	if f.RuleConfidence != nil {
-		sum += *f.RuleConfidence
-		count++
+func (p *pipelineExecutor) saveFinding(f *models.Finding) {
+	if err := p.findingRepo.Update(f); err != nil {
+		logger.Log.Error().Err(err).
+			Uint("finding_id", f.ID).
+			Msg("Failed to update finding in DB")
 	}
-	if f.MlConfidence != nil {
-		sum += *f.MlConfidence
-		count++
-	}
-
-	if count == 0 {
-		return 0.0
-	}
-	return sum / float64(count)
-}
-
-// ____________________________ ЗАГЛУШКА
-type DummyPipeline struct{}
-
-func NewDummyPipeline() PipelineExecutor {
-	return &DummyPipeline{}
-}
-
-func (p *DummyPipeline) Process(f *models.Finding) error {
-	log := logger.Log.With().
-		Str("service", "pipeline").
-		Str("method", "DummyProcess").
-		Uint("finding_id", f.ID).
-		Logger()
-
-	verdict := "FP"
-	conf := 0.5
-
-	f.FinalVerdict = &verdict
-	f.FinalConfidence = &conf
-
-	log.Debug().
-		Str("final_verdict", verdict).
-		Float64("final_confidence", conf).
-		Msg("dummy pipeline applied")
-
-	return nil
 }

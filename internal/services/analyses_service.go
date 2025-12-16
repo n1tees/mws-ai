@@ -141,24 +141,26 @@ func (s *AnalysisService) processAnalysis(analysisID uint, filePath string) {
 	var confCount int
 
 	// Process pipeline
+	// 1. Запускаем pipeline ОДИН РАЗ на ВСЮ пачку
+	if err := s.pipeline.Process(findings); err != nil {
+		logger.Log.Error().
+			Err(err).
+			Uint("analysis_id", analysisID).
+			Msg("pipeline batch processing failed")
+	}
+
+	// 2. После pipeline сохраняем каждый finding в БД
 	for _, f := range findings {
-
-		if err := s.pipeline.Process(f); err != nil {
-			logger.Log.Error().
-				Err(err).
-				Uint("analysis_id", analysisID).
-				Uint("finding_id", f.ID).
-				Msg("pipeline processing failed")
-		}
-
 		if err := s.findingRepo.Update(f); err != nil {
 			logger.Log.Error().
 				Err(err).
 				Uint("analysis_id", analysisID).
 				Uint("finding_id", f.ID).
 				Msg("failed to update finding")
+			continue
 		}
 
+		// 3. Сбор статистики для Analysis (TP/FP/Confidence)
 		if f.FinalVerdict != nil {
 			if *f.FinalVerdict == "TP" {
 				tpCount++

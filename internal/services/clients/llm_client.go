@@ -5,51 +5,80 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"mws-ai/internal/models"
 )
 
-type HeuristicClient interface {
-	Evaluate(f models.Finding) (string, float64, error)
+type LLMResult struct {
+	ID          uint    `json:"id"`
+	Verdict     string  `json:"llm_verdict"`
+	Confidence  float64 `json:"llm_confidence"`
+	Explanation string  `json:"llm_explanation"`
 }
 
-type heuristicHTTP struct {
-	url string
+type LLMClient interface {
+	AnalyzeBatch(findings []*models.Finding) (map[uint]LLMResult, error)
 }
 
-func NewHeuristicClient(baseURL string) HeuristicClient {
-	return &heuristicHTTP{url: baseURL}
+type llmHTTP struct {
+	baseURL string
+	client  *http.Client
 }
 
-func (c *heuristicHTTP) Evaluate(f models.Finding) (string, float64, error) {
+func NewLLMClient(baseURL string) LLMClient {
+	return &llmHTTP{
+		baseURL: baseURL,
+		client:  &http.Client{Timeout: 30 * time.Second},
+	}
+}
 
-	req := map[string]interface{}{
-		"rule_id":   f.RuleID,
-		"snippet":   f.Value,
-		"file_path": f.FilePath,
-		"severity":  f.Severity,
+func (c *llmHTTP) AnalyzeBatch(findings []*models.Finding) (map[uint]LLMResult, error) {
+
+	// === Формируем JSON как требует LLM ===
+	req := struct {
+		Findings []map[string]interface{} `json:"findings"`
+	}{
+		Findings: make([]map[string]interface{}, len(findings)),
+	}
+
+	for i, f := range findings {
+		req.Findings[i] = map[string]interface{}{
+			"id":        f.ID,
+			"file_path": f.FilePath,
+			"line":      f.Line,
+			"value":     f.Value,
+			"rule_id":   f.RuleID,
+		}
 	}
 
 	body, _ := json.Marshal(req)
 
-	resp, err := http.Post(c.url+"/evaluate", "application/json", bytes.NewReader(body))
+	// === POST ===
+	resp, err := c.client.Post(c.baseURL, "application/json", bytes.NewReader(body))
 	if err != nil {
-		return "", 0, err
+		return nil, fmt.Errorf("llm request error: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		return "", 0, fmt.Errorf("heuristic service returned %d", resp.StatusCode)
+		return nil, fmt.Errorf("LLM returned %d", resp.StatusCode)
 	}
 
+	// === Декод ===
 	var out struct {
-		Verdict    string  `json:"verdict"`
-		Confidence float64 `json:"confidence"`
+		Results []LLMResult `json:"results"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return "", 0, err
+		return nil, fmt.Errorf("decode LLM error: %w", err)
 	}
 
-	return out.Verdict, out.Confidence, nil
+	// === Преобразуем в map[id]LLMResult ===
+	results := make(map[uint]LLMResult)
+	for _, r := range out.Results {
+		results[r.ID] = r
+	}
+
+	return results, nil
 }
