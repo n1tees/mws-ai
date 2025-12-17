@@ -14,9 +14,9 @@ import (
 	"mws-ai/internal/router/middleware"
 	"mws-ai/internal/services/clients"
 
-	authHandlers "mws-ai/internal/auth/handlers"
 	authMiddleware "mws-ai/internal/auth/middleware"
 	analysisHandlers "mws-ai/internal/handlers/analysis"
+	authHandlers "mws-ai/internal/handlers/auth"
 	healthHandlers "mws-ai/internal/handlers/health"
 
 	"mws-ai/internal/repository"
@@ -66,7 +66,7 @@ func Setup(cfg *config.Config, db *gorm.DB) *fiber.App {
 	apiKeyHandler := authHandlers.NewAPIKeyHandler(apiKeyService)
 
 	analysisHandler := analysisHandlers.NewAnalysisHandler(analysisService)
-	uploadHandler := analysisHandlers.NewUploadHandler(analysisService)
+	uploadHandler := analysisHandlers.NewUploadHandler(analysisService, cfg.UploadDir)
 
 	// ROUTER STRUCTURE
 	api := app.Group("/api")
@@ -88,7 +88,7 @@ func Setup(cfg *config.Config, db *gorm.DB) *fiber.App {
 	}
 
 	// ANALYSIS ROUTES (protected)
-	analysisGroup := api.Group("/analysis", authMiddleware.JWTMiddleware(jwtManager))
+	analysisGroup := api.Group("/analysis", middleware.AuthMiddleware(jwtManager, apiKeyService))
 	{
 		analysisGroup.Post("/upload", uploadHandler.Upload())
 		analysisGroup.Get("/:id", analysisHandler.Get())

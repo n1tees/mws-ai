@@ -45,9 +45,9 @@ type Finding struct {
 	ScannerConfidence float64 `json:"scanner_confidence"`
 
 	// Heuristic results
-	RuleVerdict      *string  `json:"rule_verdict"`
-	RuleConfidence   *float64 `json:"rule_confidence"`
-	HeuristicReasons []string `gorm:"type:text[]" json:"heuristic_reasons"` // optional, можно оставить пустым
+	HeuristicVerdict    *string  `json:"rule_verdict"`
+	HeuristicConfidence *float64 `json:"rule_confidence"`
+	HeuristicReasons    []string `gorm:"type:text[]" json:"heuristic_reasons"` // optional, можно оставить пустым
 
 	// ML results
 	MlVerdict    *string  `json:"ml_verdict"`
@@ -66,17 +66,21 @@ type Finding struct {
 	HumanVerdict *string `json:"human_verdict"`
 	HumanComment *string `json:"human_comment"`
 
-	Status string `gorm:"type:varchar(32);default:'pending'" json:"status"`
+	Status string `gorm:"type:varchar(32);default:'pending'" json:"status"` // pernding, processed, error, review
 
 	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 }
 
 type ApiKey struct {
-	ID         uint   `gorm:"primaryKey"`
-	UserID     uint   `gorm:"index"`
-	Hash       string `gorm:"uniqueIndex"`
+	ID     uint   `gorm:"primaryKey"`
+	UserID uint   `gorm:"index"`
+	Hash   string `gorm:"uniqueIndex"`
+
+	Type   string `gorm:"index"` // "service", "admin", "integration"
+	Active bool   `gorm:"index"`
+
 	CreatedAt  time.Time
 	LastUsedAt *time.Time
-	Active     bool
+	ExpiresAt  *time.Time
 }

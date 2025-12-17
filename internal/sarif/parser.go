@@ -14,7 +14,6 @@ func NewParser() *Parser {
 	return &Parser{}
 }
 
-// Реализация интерфейса SarifParser
 func (p *Parser) Parse(path string) ([]models.Finding, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -26,33 +25,41 @@ func (p *Parser) Parse(path string) ([]models.Finding, error) {
 		return nil, fmt.Errorf("parse sarif json: %w", err)
 	}
 
-	return ConvertToFindings(sarif), nil
+	return convertToFindings(sarif), nil
 }
 
-func ConvertToFindings(s Sarif) []models.Finding {
-	findings := []models.Finding{}
+func convertToFindings(s Sarif) []models.Finding {
+	findings := make([]models.Finding, 0)
 
 	if len(s.Runs) == 0 {
 		return findings
 	}
 
 	for _, result := range s.Runs[0].Results {
-
 		for _, loc := range result.Locations {
 
+			line := loc.PhysicalLocation.Region.StartLine
+			var lineEnd *int
+			if loc.PhysicalLocation.Region.EndLine != 0 {
+				v := loc.PhysicalLocation.Region.EndLine
+				lineEnd = &v
+			}
+
+			value := result.Properties.Snippet
+			if value == "" {
+				value = result.Message.Text
+			}
+
 			f := models.Finding{
-				// AnalysisID НЕ заполняем — сервис сделает сам!
-
 				FilePath: loc.PhysicalLocation.ArtifactLocation.URI,
-				Line:     loc.PhysicalLocation.Region.StartLine,
+				Line:     line,
+				LineEnd:  lineEnd,
 
-				Value:  result.Properties.Snippet,
+				Value:  value,
 				RuleID: result.RuleID,
 
 				Severity:          result.Properties.Severity,
 				ScannerConfidence: result.Properties.Confidence,
-
-				RuleVerdict: &result.Properties.AIVerdict,
 			}
 
 			findings = append(findings, f)
