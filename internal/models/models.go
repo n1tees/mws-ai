@@ -18,16 +18,13 @@ type Analysis struct {
 	FilePath string `json:"file_path"`
 	Status   string `json:"status"` // pending / processing / done / failed
 
+	TPCount int `json:"tp_count"`
+	FPCount int `json:"fp_count"`
+
 	UploadedAt time.Time `gorm:"autoCreateTime" json:"uploaded_at"`
 	UpdatedAt  time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 
 	Findings []Finding `gorm:"constraint:OnDelete:CASCADE;" json:"findings"`
-
-	// SUMMARY FIELDS
-	FinalVerdict    *string  `json:"final_verdict"`
-	TPCount         int      `json:"tp_count"`
-	FPCount         int      `json:"fp_count"`
-	FinalConfidence *float64 `json:"final_confidence"`
 }
 
 type Finding struct {
