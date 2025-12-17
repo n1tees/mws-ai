@@ -5,86 +5,79 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"time"
 
 	"mws-ai/internal/models"
+	"mws-ai/internal/services"
 )
-
-type MLResult struct {
-	ID         uint
-	Verdict    bool
-	Confidence float64
-}
-
-type MLClient interface {
-	Predict(findings []*models.Finding) (map[uint]MLResult, error)
-}
 
 type mlHTTP struct {
 	baseURL string
 	client  *http.Client
 }
 
-func NewMLClient(baseURL string) MLClient {
+func NewMLClient(baseURL string) services.MLClient {
 	return &mlHTTP{
 		baseURL: baseURL,
-		client:  &http.Client{Timeout: 25 * time.Second},
+		client:  &http.Client{},
 	}
 }
 
-func (m *mlHTTP) Predict(findings []*models.Finding) (map[uint]MLResult, error) {
+type mlRequest struct {
+	ID       uint   `json:"id"`
+	FilePath string `json:"file_path"`
+	Value    string `json:"value"`
+	RuleID   string `json:"rule_id"`
+	Severity string `json:"severity"`
+}
 
-	// === 1. Формируем JSON-массив ===
-	payload := make([]map[string]interface{}, len(findings))
+type mlResponse struct {
+	ID         uint    `json:"id"`
+	Verdict    bool    `json:"verdict"` // true = TP
+	Confidence float64 `json:"confidence"`
+}
 
-	for i, f := range findings {
-		payload[i] = map[string]interface{}{
-			"id":                 f.ID,
-			"rule_id":            f.RuleID,
-			"file_path":          f.FilePath,
-			"line":               f.Line,
-			"value":              f.Value,
-			"severity":           f.Severity,
-			"scanner_confidence": f.ScannerConfidence,
-		}
+func (m *mlHTTP) PredictBatch(
+	findings []*models.Finding,
+) (map[uint]services.MLResult, error) {
+
+	reqBody := make([]mlRequest, 0, len(findings))
+	for _, f := range findings {
+		reqBody = append(reqBody, mlRequest{
+			ID:       f.ID,
+			FilePath: f.FilePath,
+			Value:    f.Value,
+			RuleID:   f.RuleID,
+			Severity: f.Severity,
+		})
 	}
 
-	body, _ := json.Marshal(payload)
-
-	// === 2. POST на ML-контейнер ===
-	resp, err := m.client.Post(m.baseURL, "application/json", bytes.NewReader(body))
+	payload, err := json.Marshal(reqBody)
 	if err != nil {
-		return nil, fmt.Errorf("ml request failed: %w", err)
+		return nil, err
+	}
+
+	resp, err := m.client.Post(
+		fmt.Sprintf("%s/predict", m.baseURL),
+		"application/json",
+		bytes.NewReader(payload),
+	)
+	if err != nil {
+		return nil, err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("ml service returned %d", resp.StatusCode)
+	var res []mlResponse
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return nil, err
 	}
 
-	// === 3. Читаем ответ ===
-	var out struct {
-		Results []struct {
-			ID         uint    `json:"id"`
-			Predict    bool    `json:"MLPredict"`
-			Confidence float64 `json:"MLConfidence"`
-		} `json:"results"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, fmt.Errorf("decode ml response: %w", err)
-	}
-
-	// === 4. Преобразуем ответ в map[id]MLResult ===
-	result := make(map[uint]MLResult)
-
-	for _, r := range out.Results {
-		result[r.ID] = MLResult{
-			ID:         r.ID,
-			Verdict:    r.Predict,
+	out := make(map[uint]services.MLResult, len(res))
+	for _, r := range res {
+		out[r.ID] = services.MLResult{
+			Verdict:    r.Verdict,
 			Confidence: r.Confidence,
 		}
 	}
 
-	return result, nil
+	return out, nil
 }

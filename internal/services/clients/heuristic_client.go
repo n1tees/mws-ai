@@ -5,79 +5,81 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"time"
 
 	"mws-ai/internal/models"
+	"mws-ai/internal/services"
 )
-
-type HeuristicResult struct {
-	ID         uint     `json:"id"`
-	Verdict    string   `json:"verdict"`
-	Confidence float64  `json:"confidence"`
-	Reasons    []string `json:"reasons"`
-}
-
-type HeuristicClient interface {
-	Analyze(findings []*models.Finding) (map[uint]HeuristicResult, error)
-}
 
 type heuristicHTTP struct {
 	baseURL string
 	client  *http.Client
 }
 
-func NewHeuristicClient(baseURL string) HeuristicClient {
+func NewHeuristicClient(baseURL string) services.HeuristicClient {
 	return &heuristicHTTP{
 		baseURL: baseURL,
-		client:  &http.Client{Timeout: 20 * time.Second},
+		client:  &http.Client{},
 	}
 }
 
-func (h *heuristicHTTP) Analyze(findings []*models.Finding) (map[uint]HeuristicResult, error) {
+type heuristicRequest struct {
+	ID       uint   `json:"id"`
+	FilePath string `json:"file_path"`
+	Value    string `json:"value"`
+	RuleID   string `json:"rule_id"`
+	Severity string `json:"severity"`
+}
 
-	// === Формируем JSON-массив ===
-	payload := make([]map[string]interface{}, len(findings))
+type heuristicResponse struct {
+	ID         uint     `json:"id"`
+	Verdict    string   `json:"verdict"` // TP / FP
+	Confidence float64  `json:"confidence"`
+	Reasons    []string `json:"reasons"`
+}
 
-	for i, f := range findings {
-		payload[i] = map[string]interface{}{
-			"id":                 f.ID,
-			"rule_id":            f.RuleID,
-			"file_path":          f.FilePath,
-			"line":               f.Line,
-			"value":              f.Value,
-			"severity":           f.Severity,
-			"scanner_confidence": f.ScannerConfidence,
-		}
+func (h *heuristicHTTP) AnalyzeBatch(
+	findings []*models.Finding,
+) (map[uint]services.HeuristicResult, error) {
+
+	reqBody := make([]heuristicRequest, 0, len(findings))
+	for _, f := range findings {
+		reqBody = append(reqBody, heuristicRequest{
+			ID:       f.ID,
+			FilePath: f.FilePath,
+			Value:    f.Value,
+			RuleID:   f.RuleID,
+			Severity: f.Severity,
+		})
 	}
 
-	body, _ := json.Marshal(payload)
-
-	// === POST в контейнер эвристики ===
-	resp, err := h.client.Post(h.baseURL, "application/json", bytes.NewReader(body))
+	payload, err := json.Marshal(reqBody)
 	if err != nil {
-		return nil, fmt.Errorf("heuristic request failed: %w", err)
+		return nil, err
+	}
+
+	resp, err := h.client.Post(
+		fmt.Sprintf("%s/analyze", h.baseURL),
+		"application/json",
+		bytes.NewReader(payload),
+	)
+	if err != nil {
+		return nil, err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("heuristic service returned %d", resp.StatusCode)
+	var res []heuristicResponse
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return nil, err
 	}
 
-	// === Ответ ===
-	var out struct {
-		Results []HeuristicResult `json:"results"`
+	out := make(map[uint]services.HeuristicResult, len(res))
+	for _, r := range res {
+		out[r.ID] = services.HeuristicResult{
+			Verdict:    r.Verdict,
+			Confidence: r.Confidence,
+			Reasons:    r.Reasons,
+		}
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, fmt.Errorf("decode heuristic response: %w", err)
-	}
-
-	// === Конвертируем в map[id]result ===
-	resultMap := make(map[uint]HeuristicResult)
-
-	for _, r := range out.Results {
-		resultMap[r.ID] = r
-	}
-
-	return resultMap, nil
+	return out, nil
 }

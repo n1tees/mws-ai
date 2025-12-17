@@ -8,34 +8,27 @@ import (
 	"time"
 
 	"mws-ai/internal/models"
+	"mws-ai/internal/services"
 )
-
-type LLMResult struct {
-	ID          uint    `json:"id"`
-	Verdict     string  `json:"llm_verdict"`
-	Confidence  float64 `json:"llm_confidence"`
-	Explanation string  `json:"llm_explanation"`
-}
-
-type LLMClient interface {
-	AnalyzeBatch(findings []*models.Finding) (map[uint]LLMResult, error)
-}
 
 type llmHTTP struct {
 	baseURL string
 	client  *http.Client
 }
 
-func NewLLMClient(baseURL string) LLMClient {
+func NewLLMClient(baseURL string) services.LLMClient {
 	return &llmHTTP{
 		baseURL: baseURL,
 		client:  &http.Client{Timeout: 30 * time.Second},
 	}
 }
 
-func (c *llmHTTP) AnalyzeBatch(findings []*models.Finding) (map[uint]LLMResult, error) {
+// ВАЖНО: метод реализует services.LLMClient
+func (c *llmHTTP) AnalyzeBatch(
+	findings []*models.Finding,
+) (map[uint]services.LLMResult, error) {
 
-	// === Формируем JSON как требует LLM ===
+	// === Формируем payload ===
 	req := struct {
 		Findings []map[string]interface{} `json:"findings"`
 	}{
@@ -54,30 +47,41 @@ func (c *llmHTTP) AnalyzeBatch(findings []*models.Finding) (map[uint]LLMResult, 
 
 	body, _ := json.Marshal(req)
 
-	// === POST ===
-	resp, err := c.client.Post(c.baseURL, "application/json", bytes.NewReader(body))
+	resp, err := c.client.Post(
+		c.baseURL,
+		"application/json",
+		bytes.NewReader(body),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("llm request error: %w", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("LLM returned %d", resp.StatusCode)
 	}
 
-	// === Декод ===
+	// === Декод ответа ===
 	var out struct {
-		Results []LLMResult `json:"results"`
+		Results []struct {
+			ID          uint    `json:"id"`
+			Verdict     string  `json:"llm_verdict"`
+			Confidence  float64 `json:"llm_confidence"`
+			Explanation string  `json:"llm_explanation"`
+		} `json:"results"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, fmt.Errorf("decode LLM error: %w", err)
 	}
 
-	// === Преобразуем в map[id]LLMResult ===
-	results := make(map[uint]LLMResult)
+	results := make(map[uint]services.LLMResult, len(out.Results))
 	for _, r := range out.Results {
-		results[r.ID] = r
+		results[r.ID] = services.LLMResult{
+			Verdict:     r.Verdict,
+			Confidence:  r.Confidence,
+			Explanation: r.Explanation,
+		}
 	}
 
 	return results, nil

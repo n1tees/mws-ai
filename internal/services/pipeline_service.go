@@ -1,166 +1,173 @@
 package services
 
 import (
-	"fmt"
+	"errors"
 
 	"mws-ai/internal/models"
-	"mws-ai/internal/repository"
-	"mws-ai/internal/services/clients"
 	"mws-ai/pkg/logger"
 )
 
+// Interfaces clients
+type HeuristicClient interface {
+	AnalyzeBatch(findings []*models.Finding) (map[uint]HeuristicResult, error)
+}
+
+type MLClient interface {
+	PredictBatch(findings []*models.Finding) (map[uint]MLResult, error)
+}
+
+type LLMClient interface {
+	AnalyzeBatch(findings []*models.Finding) (map[uint]LLMResult, error)
+}
+
+// Results clients
+type HeuristicResult struct {
+	Verdict    string
+	Confidence float64
+	Reasons    []string
+}
+
+type MLResult struct {
+	Verdict    bool // true = TP, false = FP
+	Confidence float64
+}
+
+type LLMResult struct {
+	Verdict     string // TP | FP (или текст, который мы нормализуем)
+	Confidence  float64
+	Explanation string
+}
+
+// PipelineExecutor
 type PipelineExecutor interface {
 	Process(findings []*models.Finding) error
 }
 
+// Realisation
 type pipelineExecutor struct {
-	heuristic   clients.HeuristicClient
-	ml          clients.MLClient
-	llm         clients.LLMClient
-	findingRepo repository.FindingRepository
+	heuristic HeuristicClient
+	ml        MLClient
+	llm       LLMClient
 }
 
-func NewPipeline(
-	heuristic clients.HeuristicClient,
-	ml clients.MLClient,
-	llm clients.LLMClient,
-	findingRepo repository.FindingRepository,
+func NewPipelineExecutor(
+	heuristic HeuristicClient,
+	ml MLClient,
+	llm LLMClient,
 ) PipelineExecutor {
 	return &pipelineExecutor{
-		heuristic:   heuristic,
-		ml:          ml,
-		llm:         llm,
-		findingRepo: findingRepo,
+		heuristic: heuristic,
+		ml:        ml,
+		llm:       llm,
 	}
 }
 
-//
-// ========== MAIN PIPELINE ==========
-//
-
+// MAIN PIPELINE ENTRYPOINT
 func (p *pipelineExecutor) Process(findings []*models.Finding) error {
+	log := logger.Log.With().
+		Str("service", "pipeline").
+		Logger()
 
-	// ===============================
-	// 1. HEURISTIC
-	// ===============================
-	heuristicResults, err := p.heuristic.Analyze(findings)
-	if err != nil {
-		logger.Log.Error().Err(err).Msg("Heuristic batch failed")
-		return fmt.Errorf("heuristic failed: %w", err)
+	log.Info().Msg("pipeline started")
+
+	if len(findings) == 0 {
+		return nil
 	}
 
-	var toML []*models.Finding
+	// 1. HEURISTIC
+	heuristicResults, err := p.heuristic.AnalyzeBatch(findings)
+	if err != nil {
+		return err
+	}
+
+	toML := make([]*models.Finding, 0)
+	toLLM := make([]*models.Finding, 0)
 
 	for _, f := range findings {
-		res, ok := heuristicResults[f.ID]
-		if !ok {
-			logger.Log.Warn().Uint("finding_id", f.ID).Msg("Missing heuristic result")
-			continue
+		if res, ok := heuristicResults[f.ID]; ok {
+			f.HeuristicVerdict = &res.Verdict
+			f.HeuristicConfidence = &res.Confidence
+			f.HeuristicReasons = res.Reasons
 		}
 
-		f.RuleVerdict = &res.Verdict
-		f.RuleConfidence = &res.Confidence
-		p.saveFinding(f)
+		// stop-rule heuristic
+		if f.HeuristicVerdict != nil &&
+			*f.HeuristicVerdict == "TP" &&
+			f.HeuristicConfidence != nil &&
+			*f.HeuristicConfidence >= 0.8 {
 
-		// STOP RULE: strong TP
-		if res.Verdict == "TP" && res.Confidence >= 0.8 {
-			// финальный вывод
-			f.FinalVerdict = &res.Verdict
-			f.FinalConfidence = &res.Confidence
-			p.saveFinding(f)
-
-			logger.Log.Info().Uint("id", f.ID).Msg("Heuristic says strong TP → STOP")
+			final := "TP"
+			conf := *f.HeuristicConfidence
+			f.FinalVerdict = &final
+			f.FinalConfidence = &conf
 			continue
 		}
 
 		toML = append(toML, f)
 	}
 
-	if len(toML) == 0 {
-		return nil
-	}
-
-	// ===============================
 	// 2. ML
-	// ===============================
-	mlResults, err := p.ml.Predict(toML)
-	if err != nil {
-		logger.Log.Error().Err(err).Msg("ML batch failed")
-		return fmt.Errorf("ml failed: %w", err)
-	}
-
-	var toLLM []*models.Finding
-
-	for _, f := range toML {
-		res, ok := mlResults[f.ID]
-		if !ok {
-			logger.Log.Warn().Uint("finding_id", f.ID).Msg("Missing ML result")
-			continue
+	if len(toML) > 0 {
+		mlResults, err := p.ml.PredictBatch(toML)
+		if err != nil {
+			return err
 		}
 
-		verdict := "FP"
-		if res.Verdict {
-			verdict = "TP"
+		for _, f := range toML {
+			if res, ok := mlResults[f.ID]; ok {
+				verdict := "FP"
+				if res.Verdict {
+					verdict = "TP"
+				}
+				f.MlVerdict = &verdict
+				f.MlConfidence = &res.Confidence
+			}
+
+			// stop-rule ML
+			if f.MlVerdict != nil &&
+				*f.MlVerdict == "TP" &&
+				f.MlConfidence != nil &&
+				*f.MlConfidence >= 0.9 {
+
+				final := "TP"
+				conf := *f.MlConfidence
+				f.FinalVerdict = &final
+				f.FinalConfidence = &conf
+				continue
+			}
+
+			toLLM = append(toLLM, f)
 		}
-
-		f.MlVerdict = &verdict
-		f.MlConfidence = &res.Confidence
-		p.saveFinding(f)
-
-		// STOP RULE: ML confident TP
-		if res.Verdict && res.Confidence >= 0.9 {
-			f.FinalVerdict = &verdict
-			f.FinalConfidence = &res.Confidence
-			p.saveFinding(f)
-
-			logger.Log.Info().Uint("id", f.ID).Msg("ML says strong TP → STOP")
-			continue
-		}
-
-		toLLM = append(toLLM, f)
 	}
 
-	if len(toLLM) == 0 {
-		return nil
-	}
-
-	// ===============================
 	// 3. LLM
-	// ===============================
-	llmResults, err := p.llm.AnalyzeBatch(toLLM)
-	if err != nil {
-		logger.Log.Error().Err(err).Msg("LLM batch failed")
-		return fmt.Errorf("llm failed: %w", err)
-	}
-
-	for _, f := range toLLM {
-		res, ok := llmResults[f.ID]
-		if !ok {
-			logger.Log.Warn().Uint("finding_id", f.ID).Msg("Missing LLM result")
-			continue
+	if len(toLLM) > 0 {
+		llmResults, err := p.llm.AnalyzeBatch(toLLM)
+		if err != nil {
+			return err
 		}
 
-		f.LlmVerdict = &res.Verdict
-		f.LlmConfidence = &res.Confidence
-		f.LlmExplanation = &res.Explanation
+		for _, f := range toLLM {
+			res, ok := llmResults[f.ID]
+			if !ok {
+				return errors.New("missing LLM result")
+			}
 
-		f.FinalVerdict = &res.Verdict
-		f.FinalConfidence = &res.Confidence
+			f.LlmVerdict = &res.Verdict
+			f.LlmConfidence = &res.Confidence
+			f.LlmExplanation = &res.Explanation
 
-		p.saveFinding(f)
+			final := "FP"
+			if res.Verdict == "TP" {
+				final = "TP"
+			}
+
+			conf := res.Confidence
+			f.FinalVerdict = &final
+			f.FinalConfidence = &conf
+		}
 	}
 
+	log.Info().Msg("pipeline finished")
 	return nil
-}
-
-//
-// ========== HELPERS ==========
-//
-
-func (p *pipelineExecutor) saveFinding(f *models.Finding) {
-	if err := p.findingRepo.Update(f); err != nil {
-		logger.Log.Error().Err(err).
-			Uint("finding_id", f.ID).
-			Msg("Failed to update finding in DB")
-	}
 }

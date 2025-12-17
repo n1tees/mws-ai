@@ -13,200 +13,157 @@ type SarifParser interface {
 	Parse(filePath string) ([]models.Finding, error)
 }
 
-// AnalysisService
 type AnalysisService struct {
-	repo        repository.AnalysisRepository
-	findingRepo repository.FindingRepository
-	sarifParser SarifParser
-	pipeline    PipelineExecutor
+	analysisRepo repository.AnalysisRepository
+	findingRepo  repository.FindingRepository
+	parser       SarifParser
+	pipeline     PipelineExecutor
 }
 
 func NewAnalysisService(
-	repo repository.AnalysisRepository,
+	analysisRepo repository.AnalysisRepository,
 	findingRepo repository.FindingRepository,
 	parser SarifParser,
 	pipeline PipelineExecutor,
 ) *AnalysisService {
 	return &AnalysisService{
-		repo:        repo,
-		findingRepo: findingRepo,
-		sarifParser: parser,
-		pipeline:    pipeline,
+		analysisRepo: analysisRepo,
+		findingRepo:  findingRepo,
+		parser:       parser,
+		pipeline:     pipeline,
 	}
 }
 
-// Public API: Upload
-func (s *AnalysisService) Upload(userID uint, filePath string) (*models.Analysis, error) {
+// =====================
+// UPLOAD ENTRYPOINT
+// =====================
+func (s *AnalysisService) Upload(
+	userID uint,
+	filePath string,
+) (*models.Analysis, error) {
 
 	log := logger.Log.With().
 		Str("service", "analysis").
 		Str("method", "Upload").
 		Uint("user_id", userID).
-		Str("file_path", filePath).
 		Logger()
 
-	log.Debug().Msg("upload analysis request received")
-
 	analysis := &models.Analysis{
-		UserID:     userID,
-		UploadedAt: time.Now(),
-		Status:     "pending",
-		FilePath:   filePath,
+		UserID: userID,
+		Status: "processing",
 	}
 
-	// Создаём Analysis
-	if err := s.repo.Create(analysis); err != nil {
-		log.Error().
-			Err(err).
-			Msg("failed to create analysis")
-
+	if err := s.analysisRepo.Create(analysis); err != nil {
 		return nil, err
 	}
 
 	log.Info().
 		Uint("analysis_id", analysis.ID).
-		Msg("analysis created, starting pipeline")
+		Msg("analysis created")
 
-	// Асинхронный запуск
 	go s.processAnalysis(analysis.ID, filePath)
 
 	return analysis, nil
 }
 
-// Public API: Queries
-func (s *AnalysisService) GetByID(id uint) (*models.Analysis, error) {
-	return s.repo.GetByID(id)
-}
-
-func (s *AnalysisService) ListByUser(userID uint) ([]models.Analysis, error) {
-	return s.repo.ListByUser(userID)
-}
-
-// INTERNAL: Background worker
-func (s *AnalysisService) processAnalysis(analysisID uint, filePath string) {
-
-	start := time.Now()
+// =====================
+// PROCESS ANALYSIS
+// =====================
+func (s *AnalysisService) processAnalysis(
+	analysisID uint,
+	filePath string,
+) {
 
 	log := logger.Log.With().
 		Str("service", "analysis").
 		Str("method", "processAnalysis").
 		Uint("analysis_id", analysisID).
-		Str("file_path", filePath).
 		Logger()
 
-	log.Info().Msg("analysis processing started")
+	start := time.Now()
 
-	_ = s.repo.UpdateStatus(analysisID, "processing")
-
-	// Parse SARIF
-	parsedFindings, err := s.sarifParser.Parse(filePath)
+	// ---------- PARSE SARIF ----------
+	parsed, err := s.parser.Parse(filePath)
 	if err != nil {
-		log.Error().
-			Err(err).
-			Msg("SARIF parsing failed")
-
-		_ = s.repo.UpdateStatus(analysisID, "failed")
+		log.Error().Err(err).Msg("failed to parse sarif")
+		_ = s.analysisRepo.UpdateStatus(analysisID, "failed")
 		return
 	}
 
-	log.Debug().
-		Int("findings_count", len(parsedFindings)).
-		Msg("SARIF parsed successfully")
-
-	// Convert slice of values → slice of pointers
-	findings := make([]*models.Finding, len(parsedFindings))
-	for i := range parsedFindings {
-		findings[i] = &parsedFindings[i]
-		findings[i].AnalysisID = analysisID
+	findings := make([]models.Finding, len(parsed))
+	for i := range parsed {
+		parsed[i].AnalysisID = analysisID
+		findings[i] = parsed[i]
 	}
 
-	// Bulk insert
-	if err := s.findingRepo.BulkInsert(analysisID, findings); err != nil {
-		log.Error().
-			Err(err).
-			Msg("saving findings failed")
-
-		_ = s.repo.UpdateStatus(analysisID, "failed")
+	if err := s.findingRepo.BulkInsert(findings); err != nil {
+		log.Error().Err(err).Msg("failed to insert findings")
+		_ = s.analysisRepo.UpdateStatus(analysisID, "failed")
 		return
 	}
 
 	log.Debug().
 		Int("findings_count", len(findings)).
-		Msg("findings saved")
+		Msg("findings inserted")
 
-	// Summary accumulators
-	tpCount := 0
-	fpCount := 0
-	var confSum float64
-	var confCount int
-
-	// Process pipeline
-	// 1. Запускаем pipeline ОДИН РАЗ на ВСЮ пачку
-	if err := s.pipeline.Process(findings); err != nil {
-		logger.Log.Error().
-			Err(err).
-			Uint("analysis_id", analysisID).
-			Msg("pipeline batch processing failed")
+	// ---------- PIPELINE (IN-MEMORY) ----------
+	ptrs := make([]*models.Finding, len(findings))
+	for i := range findings {
+		ptrs[i] = &findings[i]
 	}
 
-	// 2. После pipeline сохраняем каждый finding в БД
-	for _, f := range findings {
-		if err := s.findingRepo.Update(f); err != nil {
-			logger.Log.Error().
-				Err(err).
-				Uint("analysis_id", analysisID).
-				Uint("finding_id", f.ID).
-				Msg("failed to update finding")
-			continue
-		}
+	if err := s.pipeline.Process(ptrs); err != nil {
+		log.Error().Err(err).Msg("pipeline failed")
+		_ = s.analysisRepo.UpdateStatus(analysisID, "failed")
+		return
+	}
 
-		// 3. Сбор статистики для Analysis (TP/FP/Confidence)
+	// ---------- SAVE FINDINGS ----------
+	tpCount := 0
+	fpCount := 0
+
+	for _, f := range ptrs {
+		f.Status = "processed"
+
 		if f.FinalVerdict != nil {
-			if *f.FinalVerdict == "TP" {
+			switch *f.FinalVerdict {
+			case "TP":
 				tpCount++
-			} else if *f.FinalVerdict == "FP" {
+			case "FP":
 				fpCount++
 			}
 		}
 
-		if f.FinalConfidence != nil {
-			confSum += *f.FinalConfidence
-			confCount++
-		}
+		_ = s.findingRepo.UpdateFields(f.ID, map[string]interface{}{
+			"heuristic_verdict":    f.HeuristicVerdict,
+			"heuristic_confidence": f.HeuristicConfidence,
+			"heuristic_reasons":    f.HeuristicReasons,
+			"ml_verdict":           f.MlVerdict,
+			"ml_confidence":        f.MlConfidence,
+			"llm_verdict":          f.LlmVerdict,
+			"llm_confidence":       f.LlmConfidence,
+			"llm_explanation":      f.LlmExplanation,
+			"final_verdict":        f.FinalVerdict,
+			"final_confidence":     f.FinalConfidence,
+			"status":               f.Status,
+		})
 	}
 
-	log.Debug().
-		Int("tp_count", tpCount).
-		Int("fp_count", fpCount).
-		Int("confidence_count", confCount).
-		Msg("pipeline processing finished")
-
-	// COMPUTE FINAL SUMMARY
-	finalVerdict := "FP"
-	if tpCount > fpCount {
-		finalVerdict = "TP"
-	}
-
-	var avgConf *float64
-	if confCount > 0 {
-		c := confSum / float64(confCount)
-		avgConf = &c
-	}
-
-	// Save summary
-	if err := s.repo.UpdateSummary(analysisID, finalVerdict, tpCount, fpCount, avgConf); err != nil {
-		log.Error().
-			Err(err).
-			Msg("failed to update analysis summary")
-	}
-
-	// DONE
-	_ = s.repo.UpdateStatus(analysisID, "done")
+	// ---------- UPDATE ANALYSIS ----------
+	_ = s.analysisRepo.UpdateCounts(analysisID, tpCount, fpCount)
+	_ = s.analysisRepo.UpdateStatus(analysisID, "done")
 
 	log.Info().
-		Str("final_verdict", finalVerdict).
 		Int("tp", tpCount).
 		Int("fp", fpCount).
 		Dur("duration", time.Since(start)).
-		Msg("analysis successfully processed")
+		Msg("analysis completed")
+}
+
+func (s *AnalysisService) ListByUser(userID uint) ([]models.Analysis, error) {
+	return s.analysisRepo.ListByUser(userID)
+}
+
+func (s *AnalysisService) GetByID(id uint) (*models.Analysis, error) {
+	return s.analysisRepo.GetByID(id)
 }
