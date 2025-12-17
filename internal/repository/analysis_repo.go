@@ -14,7 +14,7 @@ type AnalysisRepository interface {
 	GetByID(id uint) (*models.Analysis, error)
 	ListByUser(userID uint) ([]models.Analysis, error)
 	UpdateStatus(id uint, status string) error
-	UpdateSummary(id uint, verdict string, tp int, fp int, conf *float64) error
+	UpdateCounts(id uint, tp int, fp int) error
 }
 
 type analysisRepository struct {
@@ -32,31 +32,17 @@ func (r *analysisRepository) Create(analysis *models.Analysis) error {
 			Str("method", "Create").
 			Err(err).
 			Msg("failed to create analysis")
-
 		return err
 	}
-
-	logger.Log.Debug().
-		Str("repo", "analysis").
-		Str("method", "Create").
-		Uint("analysis_id", analysis.ID).
-		Uint("user_id", analysis.UserID).
-		Msg("analysis created")
-
 	return nil
 }
 
 func (r *analysisRepository) GetByID(id uint) (*models.Analysis, error) {
 	var analysis models.Analysis
 
-	err := r.db.
-		Preload("Findings").
-		First(&analysis, id).
-		Error
-
+	err := r.db.First(&analysis, id).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			// ❗ это НЕ ошибка — просто нет записи
 			return nil, nil
 		}
 
@@ -74,12 +60,12 @@ func (r *analysisRepository) GetByID(id uint) (*models.Analysis, error) {
 }
 
 func (r *analysisRepository) ListByUser(userID uint) ([]models.Analysis, error) {
-	var list []models.Analysis
+	var analyses []models.Analysis
 
 	if err := r.db.
 		Where("user_id = ?", userID).
-		Order("uploaded_at DESC").
-		Find(&list).
+		Order("created_at DESC").
+		Find(&analyses).
 		Error; err != nil {
 
 		logger.Log.Error().
@@ -92,18 +78,12 @@ func (r *analysisRepository) ListByUser(userID uint) ([]models.Analysis, error) 
 		return nil, err
 	}
 
-	logger.Log.Debug().
-		Str("repo", "analysis").
-		Str("method", "ListByUser").
-		Uint("user_id", userID).
-		Int("count", len(list)).
-		Msg("analyses listed")
-
-	return list, nil
+	return analyses, nil
 }
 
 func (r *analysisRepository) UpdateStatus(id uint, status string) error {
-	res := r.db.Model(&models.Analysis{}).
+	res := r.db.
+		Model(&models.Analysis{}).
 		Where("id = ?", id).
 		Update("status", status)
 
@@ -112,15 +92,12 @@ func (r *analysisRepository) UpdateStatus(id uint, status string) error {
 			Str("repo", "analysis").
 			Str("method", "UpdateStatus").
 			Uint("analysis_id", id).
-			Str("status", status).
 			Err(res.Error).
 			Msg("failed to update analysis status")
-
 		return res.Error
 	}
 
 	if res.RowsAffected == 0 {
-		// ❗ не ошибка, но полезно знать
 		logger.Log.Debug().
 			Str("repo", "analysis").
 			Str("method", "UpdateStatus").
@@ -131,39 +108,35 @@ func (r *analysisRepository) UpdateStatus(id uint, status string) error {
 	return nil
 }
 
-func (r *analysisRepository) UpdateSummary(
+func (r *analysisRepository) UpdateCounts(
 	id uint,
-	verdict string,
 	tp int,
 	fp int,
-	conf *float64,
 ) error {
-	res := r.db.Model(&models.Analysis{}).
+	res := r.db.
+		Model(&models.Analysis{}).
 		Where("id = ?", id).
 		Updates(map[string]interface{}{
-			"final_verdict":    verdict,
-			"tp_count":         tp,
-			"fp_count":         fp,
-			"final_confidence": conf,
+			"tp_count": tp,
+			"fp_count": fp,
 		})
 
 	if res.Error != nil {
 		logger.Log.Error().
 			Str("repo", "analysis").
-			Str("method", "UpdateSummary").
+			Str("method", "UpdateCounts").
 			Uint("analysis_id", id).
 			Err(res.Error).
-			Msg("failed to update analysis summary")
-
+			Msg("failed to update analysis counts")
 		return res.Error
 	}
 
 	if res.RowsAffected == 0 {
 		logger.Log.Debug().
 			Str("repo", "analysis").
-			Str("method", "UpdateSummary").
+			Str("method", "UpdateCounts").
 			Uint("analysis_id", id).
-			Msg("no analysis found to update summary")
+			Msg("no analysis found to update counts")
 	}
 
 	return nil
