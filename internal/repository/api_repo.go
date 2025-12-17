@@ -12,7 +12,7 @@ import (
 
 type APIKeyRepository interface {
 	Create(key *models.ApiKey) error
-	FindByHash(hash string) (*models.ApiKey, error)
+	FindActiveByHash(hash string) (*models.ApiKey, error)
 	UpdateLastUsed(id uint, t *time.Time) error
 }
 
@@ -45,11 +45,19 @@ func (r *apiKeyRepository) Create(key *models.ApiKey) error {
 	return nil
 }
 
-func (r *apiKeyRepository) FindByHash(hash string) (*models.ApiKey, error) {
+func (r *apiKeyRepository) FindActiveByHash(hash string) (*models.ApiKey, error) {
 	var key models.ApiKey
+
+	now := time.Now()
 
 	err := r.db.
 		Where("hash = ?", hash).
+		Where("active = ?", true).
+		Where(
+			r.db.
+				Where("expires_at IS NULL").
+				Or("expires_at > ?", now),
+		).
 		First(&key).
 		Error
 
@@ -60,9 +68,9 @@ func (r *apiKeyRepository) FindByHash(hash string) (*models.ApiKey, error) {
 
 		logger.Log.Error().
 			Str("repo", "api_key").
-			Str("method", "FindByHash").
+			Str("method", "FindActiveByHash").
 			Err(err).
-			Msg("failed to find API key by hash")
+			Msg("failed to find active API key by hash")
 
 		return nil, err
 	}
