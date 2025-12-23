@@ -2,16 +2,14 @@ package services
 
 import (
 	"errors"
-
 	"mws-ai/internal/models"
 	"mws-ai/pkg/logger"
 )
 
 // Interfaces clients
 type HeuristicClient interface {
-	AnalyzeBatch(findings []*models.Finding) (map[uint]HeuristicResult, error)
+	AnalyzeBatch(findings []*models.Finding) (map[uint]*HeuristicFacts, error)
 }
-
 type MLClient interface {
 	PredictBatch(findings []*models.Finding) (map[uint]MLResult, error)
 }
@@ -21,10 +19,12 @@ type LLMClient interface {
 }
 
 // Results clients
-type HeuristicResult struct {
-	Verdict    string
-	Confidence float64
-	Reasons    []string
+
+type HeuristicFacts struct {
+	HeuristicTriggered bool
+	HeuristicReason    *string
+	EntropyClass       *string
+	EntropyValue       *float64
 }
 
 type MLResult struct {
@@ -74,39 +74,48 @@ func (p *pipelineExecutor) Process(findings []*models.Finding) error {
 		return nil
 	}
 
-	// 1. HEURISTIC
+	// 1. HEURISTIC (NEW)
 	heuristicResults, err := p.heuristic.AnalyzeBatch(findings)
 	if err != nil {
 		return err
 	}
 
 	toML := make([]*models.Finding, 0)
-	toLLM := make([]*models.Finding, 0)
 
 	for _, f := range findings {
-		if res, ok := heuristicResults[f.ID]; ok {
-			f.HeuristicVerdict = &res.Verdict
-			f.HeuristicConfidence = &res.Confidence
-			f.HeuristicReasons = res.Reasons
-		}
-
-		// stop-rule heuristic
-		if f.HeuristicVerdict != nil &&
-			*f.HeuristicVerdict == "TP" &&
-			f.HeuristicConfidence != nil &&
-			*f.HeuristicConfidence >= 0.8 {
-
-			final := "TP"
-			conf := *f.HeuristicConfidence
-			f.FinalVerdict = &final
-			f.FinalConfidence = &conf
+		h, ok := heuristicResults[f.ID]
+		if !ok {
 			continue
 		}
 
+		// сохраняем факты эвристики
+		f.HeuristicTriggered = h.HeuristicTriggered
+		f.HeuristicReason = h.HeuristicReason
+		f.EntropyClass = h.EntropyClass
+		f.EntropyValue = h.EntropyValue
+
+		// эвристика сработала
+		if f.HeuristicTriggered {
+			final := "FP"
+			f.FinalVerdict = &final
+			f.DecisionSource = "heuristic (static)"
+			continue
+		}
+		//  недостаточная энтропия
+		if f.EntropyClass != nil && *f.EntropyClass != "acceptable" {
+			final := "FP"
+			f.FinalVerdict = &final
+			f.DecisionSource = "heuristic (entropy)"
+			continue
+		}
+
+		// идём дальше в ML
 		toML = append(toML, f)
 	}
 
 	// 2. ML
+	toLLM := make([]*models.Finding, 0)
+
 	if len(toML) > 0 {
 		mlResults, err := p.ml.PredictBatch(toML)
 		if err != nil {
@@ -123,23 +132,21 @@ func (p *pipelineExecutor) Process(findings []*models.Finding) error {
 				f.MlConfidence = &res.Confidence
 			}
 
-			// stop-rule ML
+			// STOP-RULE ML
 			if f.MlVerdict != nil &&
 				*f.MlVerdict == "TP" &&
 				f.MlConfidence != nil &&
-				*f.MlConfidence >= 0.9 {
+				*f.MlConfidence >= 0.8 {
 
 				final := "TP"
-				conf := *f.MlConfidence
 				f.FinalVerdict = &final
-				f.FinalConfidence = &conf
+				f.DecisionSource = "ml"
 				continue
 			}
 
 			toLLM = append(toLLM, f)
 		}
 	}
-
 	// 3. LLM
 	if len(toLLM) > 0 {
 		llmResults, err := p.llm.AnalyzeBatch(toLLM)
@@ -158,13 +165,14 @@ func (p *pipelineExecutor) Process(findings []*models.Finding) error {
 			f.LlmExplanation = &res.Explanation
 
 			final := "FP"
-			if res.Verdict == "TP" {
+			if res.Verdict == "real_secret" {
 				final = "TP"
+			} else if res.Verdict == "unknown" {
+				final = "LLM_UNKNOWN_ANSWER"
 			}
 
-			conf := res.Confidence
 			f.FinalVerdict = &final
-			f.FinalConfidence = &conf
+			f.DecisionSource = "llm"
 		}
 	}
 
