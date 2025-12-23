@@ -50,8 +50,7 @@ func Setup(cfg *config.Config, db *gorm.DB) *fiber.App {
 	mlClient := clients.NewMLClient(cfg.MLURL)
 	llmClient := clients.NewLLMClient(cfg.LLMURL)
 	// INIT PIPELINE EXECUTOR
-	pipeline := services.NewPipeline(heuristicClient, mlClient, llmClient, findingRepo)
-
+	pipeline := services.NewPipelineExecutor(heuristicClient, mlClient, llmClient)
 	// INIT SERVICES
 	authService := services.NewAuthService(userRepo, jwtManager)
 	apiKeyService := services.NewAPIKeyService(apiKeyRepo)
@@ -88,7 +87,11 @@ func Setup(cfg *config.Config, db *gorm.DB) *fiber.App {
 	}
 
 	// ANALYSIS ROUTES (protected)
-	analysisGroup := api.Group("/analysis", middleware.AuthMiddleware(jwtManager, apiKeyService))
+	analysisGroup := api.Group("/analyses", middleware.AuthMiddleware(jwtManager, apiKeyService))
+	{
+		analysisGroup.Get("/", analysisHandler.List())
+		analysisGroup.Get("/:id", analysisHandler.Get())
+	}
 	{
 		analysisGroup.Post("/upload", uploadHandler.Upload())
 		analysisGroup.Get("/:id", analysisHandler.Get())

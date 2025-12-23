@@ -135,17 +135,18 @@ func (s *AnalysisService) processAnalysis(
 		}
 
 		_ = s.findingRepo.UpdateFields(f.ID, map[string]interface{}{
-			"heuristic_verdict":    f.HeuristicVerdict,
-			"heuristic_confidence": f.HeuristicConfidence,
-			"heuristic_reasons":    f.HeuristicReasons,
-			"ml_verdict":           f.MlVerdict,
-			"ml_confidence":        f.MlConfidence,
-			"llm_verdict":          f.LlmVerdict,
-			"llm_confidence":       f.LlmConfidence,
-			"llm_explanation":      f.LlmExplanation,
-			"final_verdict":        f.FinalVerdict,
-			"final_confidence":     f.FinalConfidence,
-			"status":               f.Status,
+			"heuristic_triggered": f.HeuristicTriggered,
+			"heuristic_reason":    f.HeuristicReason,
+			"entropy_class":       f.EntropyClass,
+			"entropy_value":       f.EntropyValue,
+			"ml_verdict":          f.MlVerdict,
+			"ml_confidence":       f.MlConfidence,
+			"llm_verdict":         f.LlmVerdict,
+			"llm_confidence":      f.LlmConfidence,
+			"llm_explanation":     f.LlmExplanation,
+			"final_verdict":       f.FinalVerdict,
+			"status":              f.Status,
+			"decision_source":     f.DecisionSource,
 		})
 	}
 
@@ -166,4 +167,21 @@ func (s *AnalysisService) ListByUser(userID uint) ([]models.Analysis, error) {
 
 func (s *AnalysisService) GetByID(id uint) (*models.Analysis, error) {
 	return s.analysisRepo.GetByID(id)
+}
+
+func (s *AnalysisService) GetDetails(
+	id uint,
+) (*models.Analysis, []models.Finding, error) {
+
+	analysis, err := s.analysisRepo.GetByID(id)
+	if err != nil || analysis == nil {
+		return nil, nil, err
+	}
+
+	findings, err := s.findingRepo.ListByAnalysis(id)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return analysis, findings, nil
 }
