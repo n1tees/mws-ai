@@ -1,0 +1,60 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: mws-postgres
+    environment:
+      POSTGRES_USER: mws
+      POSTGRES_PASSWORD: mws
+      POSTGRES_DB: mws
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ../..
+      dockerfile: docker/dev/dockerfile
+    container_name: mws-backend
+    depends_on:
+      - postgres
+      - heuristic
+      - ml
+      - llm
+    env_file:
+      - ./.env.docker
+    ports:
+      - "9000:9000"
+    volumes:
+      - ./uploads:/app/uploads
+    restart: unless-stopped
+
+  heuristic:
+    image: malenkaygolovka/finding-analyzer:latest
+    container_name: mws-heuristic
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  ml:
+    image: fpni9255/mws_model_ml:latest
+    container_name: mws-ml
+    ports:
+      - "5000:5000"
+    restart: unless-stopped
+
+  llm:
+    image: sociologyml/security-findings-classifier:latest
+    container_name: mws-llm
+    ports:
+      - "8000:8000"
+    environment:
+      LLM_API_URL: "https://qwen3.product.nova.neurotech.k2.cloud/"
+      LLM_API_TOKEN: "IuHedPt4UeaL"
+    restart: unless-stopped
+
+volumes:
+  pgdata:

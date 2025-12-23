@@ -11,6 +11,20 @@ definitions:
       uploaded_at:
         type: string
     type: object
+  dto.AnalysisResponse:
+    properties:
+      findings:
+        items:
+          $ref: '#/definitions/dto.FindingItem'
+        type: array
+      id:
+        example: 42
+        type: integer
+      uploaded_at:
+        type: string
+      user_id:
+        type: integer
+    type: object
   dto.CreateAPIKeyResponse:
     properties:
       api_key:
@@ -20,6 +34,24 @@ definitions:
   dto.ErrorResponse:
     properties:
       message:
+        type: string
+    type: object
+  dto.FindingItem:
+    properties:
+      file_path:
+        type: string
+      final_confidence:
+        type: number
+      final_verdict:
+        type: string
+      id:
+        example: 10
+        type: integer
+      line:
+        type: integer
+      rule_id:
+        type: string
+      severity:
         type: string
     type: object
   dto.LoginRequest:
@@ -88,6 +120,35 @@ paths:
       summary: Получить список анализов пользователя
       tags:
       - Analysis
+  /analysis/{id}:
+    get:
+      description: Возвращает Analysis вместе со списком Findings
+      parameters:
+      - description: ID анализа
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.AnalysisResponse'
+        "401":
+          description: Неавторизован
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "404":
+          description: Анализ не найден
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Получить анализ по ID
+      tags:
+      - Analysis
   /analysis/upload:
     post:
       consumes:
@@ -107,11 +168,15 @@ paths:
           schema:
             $ref: '#/definitions/dto.UploadAnalysisResponse'
         "400":
-          description: Некорректный файл
+          description: Bad Request
           schema:
             $ref: '#/definitions/dto.ErrorResponse'
         "401":
-          description: Неавторизован
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/dto.ErrorResponse'
+        "500":
+          description: Internal Server Error
           schema:
             $ref: '#/definitions/dto.ErrorResponse'
       security:
@@ -206,4 +271,9 @@ paths:
 schemes:
 - http
 - https
+securityDefinitions:
+  BearerAuth:
+    in: header
+    name: Authorization
+    type: apiKey
 swagger: "2.0"

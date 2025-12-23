@@ -81,13 +81,65 @@
                         }
                     },
                     "400": {
-                        "description": "Некорректный файл",
+                        "description": "Bad Request",
                         "schema": {
                             "$ref": "#/definitions/dto.ErrorResponse"
                         }
                     },
                     "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/analysis/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Возвращает Analysis вместе со списком Findings",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Analysis"
+                ],
+                "summary": "Получить анализ по ID",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "ID анализа",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.AnalysisResponse"
+                        }
+                    },
+                    "401": {
                         "description": "Неавторизован",
+                        "schema": {
+                            "$ref": "#/definitions/dto.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Анализ не найден",
                         "schema": {
                             "$ref": "#/definitions/dto.ErrorResponse"
                         }
@@ -245,6 +297,27 @@
                 }
             }
         },
+        "dto.AnalysisResponse": {
+            "type": "object",
+            "properties": {
+                "findings": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.FindingItem"
+                    }
+                },
+                "id": {
+                    "type": "integer",
+                    "example": 42
+                },
+                "uploaded_at": {
+                    "type": "string"
+                },
+                "user_id": {
+                    "type": "integer"
+                }
+            }
+        },
         "dto.CreateAPIKeyResponse": {
             "type": "object",
             "properties": {
@@ -258,6 +331,33 @@
             "type": "object",
             "properties": {
                 "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.FindingItem": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string"
+                },
+                "final_confidence": {
+                    "type": "number"
+                },
+                "final_verdict": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer",
+                    "example": 10
+                },
+                "line": {
+                    "type": "integer"
+                },
+                "rule_id": {
+                    "type": "string"
+                },
+                "severity": {
                     "type": "string"
                 }
             }
@@ -318,6 +418,13 @@
                     "example": 42
                 }
             }
+        }
+    },
+    "securityDefinitions": {
+        "BearerAuth": {
+            "type": "apiKey",
+            "name": "Authorization",
+            "in": "header"
         }
     }
 }
