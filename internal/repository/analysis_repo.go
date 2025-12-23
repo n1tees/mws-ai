@@ -15,6 +15,7 @@ type AnalysisRepository interface {
 	ListByUser(userID uint) ([]models.Analysis, error)
 	UpdateStatus(id uint, status string) error
 	UpdateCounts(id uint, tp int, fp int) error
+	
 }
 
 type analysisRepository struct {
@@ -64,7 +65,7 @@ func (r *analysisRepository) ListByUser(userID uint) ([]models.Analysis, error) 
 
 	if err := r.db.
 		Where("user_id = ?", userID).
-		Order("created_at DESC").
+		Order("uploaded_at DESC").
 		Find(&analyses).
 		Error; err != nil {
 

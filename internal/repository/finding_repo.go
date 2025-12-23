@@ -38,13 +38,12 @@ func (r *findingRepository) BulkInsert(findings []models.Finding) error {
 	return nil
 }
 
-func (r *findingRepository) UpdateFields(id uint, fields map[string]interface{}) error {
-	if len(fields) == 0 {
-		return nil
-	}
+func (r *findingRepository) UpdateFields(
+	id uint,
+	fields map[string]interface{},
+) error {
 
-	res := r.db.
-		Model(&models.Finding{}).
+	res := r.db.Model(&models.Finding{}).
 		Where("id = ?", id).
 		Updates(fields)
 
@@ -55,15 +54,8 @@ func (r *findingRepository) UpdateFields(id uint, fields map[string]interface{})
 			Uint("finding_id", id).
 			Err(res.Error).
 			Msg("failed to update finding fields")
-		return res.Error
-	}
 
-	if res.RowsAffected == 0 {
-		logger.Log.Warn().
-			Str("repo", "finding").
-			Str("method", "UpdateFields").
-			Uint("finding_id", id).
-			Msg("no rows affected when updating finding")
+		return res.Error
 	}
 
 	return nil
