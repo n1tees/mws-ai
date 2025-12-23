@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"mws-ai/internal/models"
 	"mws-ai/internal/services"
@@ -18,46 +19,31 @@ type mlHTTP struct {
 func NewMLClient(baseURL string) services.MLClient {
 	return &mlHTTP{
 		baseURL: baseURL,
-		client:  &http.Client{},
+		client:  &http.Client{Timeout: 10 * time.Second},
 	}
 }
 
-type mlRequest struct {
-	ID       uint   `json:"id"`
-	FilePath string `json:"file_path"`
-	Value    string `json:"value"`
-	RuleID   string `json:"rule_id"`
-	Severity string `json:"severity"`
+type mlResponse struct {
+	ID           uint    `json:"id"`
+	MLPredict    bool    `json:"MLPredict"`
+	MLConfidence float64 `json:"MLConfidence"`
 }
 
-type mlResponse struct {
-	ID         uint    `json:"id"`
-	Verdict    bool    `json:"verdict"` // true = TP
-	Confidence float64 `json:"confidence"`
+type mlEnvelope struct {
+	Results []mlResponse `json:"results"`
 }
 
 func (m *mlHTTP) PredictBatch(
 	findings []*models.Finding,
 ) (map[uint]services.MLResult, error) {
 
-	reqBody := make([]mlRequest, 0, len(findings))
-	for _, f := range findings {
-		reqBody = append(reqBody, mlRequest{
-			ID:       f.ID,
-			FilePath: f.FilePath,
-			Value:    f.Value,
-			RuleID:   f.RuleID,
-			Severity: f.Severity,
-		})
-	}
-
-	payload, err := json.Marshal(reqBody)
+	payload, err := json.Marshal(findings)
 	if err != nil {
 		return nil, err
 	}
 
 	resp, err := m.client.Post(
-		fmt.Sprintf("%s/predict", m.baseURL),
+		m.baseURL,
 		"application/json",
 		bytes.NewReader(payload),
 	)
@@ -66,16 +52,20 @@ func (m *mlHTTP) PredictBatch(
 	}
 	defer resp.Body.Close()
 
-	var res []mlResponse
-	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("ml returned %d", resp.StatusCode)
+	}
+
+	var env mlEnvelope
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
 		return nil, err
 	}
 
-	out := make(map[uint]services.MLResult, len(res))
-	for _, r := range res {
+	out := make(map[uint]services.MLResult, len(env.Results))
+	for _, r := range env.Results {
 		out[r.ID] = services.MLResult{
-			Verdict:    r.Verdict,
-			Confidence: r.Confidence,
+			Verdict:    r.MLPredict,
+			Confidence: r.MLConfidence,
 		}
 	}
 

@@ -12,45 +12,72 @@ import (
 )
 
 type llmHTTP struct {
-	baseURL string
-	client  *http.Client
+	url    string
+	client *http.Client
 }
 
-func NewLLMClient(baseURL string) services.LLMClient {
+func NewLLMClient(url string) services.LLMClient {
 	return &llmHTTP{
-		baseURL: baseURL,
-		client:  &http.Client{Timeout: 30 * time.Second},
+		url: url,
+		client: &http.Client{
+			Timeout: 5 * time.Minute,
+		},
 	}
 }
 
-// ВАЖНО: метод реализует services.LLMClient
+type llmFinding struct {
+	ID       uint   `json:"id"`
+	FilePath string `json:"file_path"`
+	Line     int    `json:"line"`
+	Value    string `json:"value"`
+	RuleID   string `json:"rule_id"`
+}
+
+type llmRequest struct {
+	Findings []llmFinding `json:"findings"`
+}
+
+type llmResponse struct {
+	ID          uint    `json:"id"`
+	Verdict     string  `json:"llm_verdict"`
+	Confidence  float64 `json:"llm_confidence"`
+	Explanation string  `json:"llm_explanation"`
+}
+
+type llmResponseEnvelope struct {
+	Results []llmResponse `json:"results"`
+}
+
+// CLIENT
 func (c *llmHTTP) AnalyzeBatch(
 	findings []*models.Finding,
 ) (map[uint]services.LLMResult, error) {
 
-	// === Формируем payload ===
-	req := struct {
-		Findings []map[string]interface{} `json:"findings"`
-	}{
-		Findings: make([]map[string]interface{}, len(findings)),
+	// build request
+	req := llmRequest{
+		Findings: make([]llmFinding, 0, len(findings)),
 	}
 
-	for i, f := range findings {
-		req.Findings[i] = map[string]interface{}{
-			"id":        f.ID,
-			"file_path": f.FilePath,
-			"line":      f.Line,
-			"value":     f.Value,
-			"rule_id":   f.RuleID,
-		}
+	for _, f := range findings {
+		req.Findings = append(req.Findings, llmFinding{
+			ID:       f.ID,
+			FilePath: f.FilePath,
+			Line:     f.Line,
+			Value:    f.Value,
+			RuleID:   f.RuleID,
+		})
 	}
 
-	body, _ := json.Marshal(req)
+	payload, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
 
+	// send request
 	resp, err := c.client.Post(
-		c.baseURL,
+		c.url,
 		"application/json",
-		bytes.NewReader(body),
+		bytes.NewReader(payload),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("llm request error: %w", err)
@@ -58,31 +85,24 @@ func (c *llmHTTP) AnalyzeBatch(
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("LLM returned %d", resp.StatusCode)
+		return nil, fmt.Errorf("llm returned status %d", resp.StatusCode)
 	}
 
-	// === Декод ответа ===
-	var out struct {
-		Results []struct {
-			ID          uint    `json:"id"`
-			Verdict     string  `json:"llm_verdict"`
-			Confidence  float64 `json:"llm_confidence"`
-			Explanation string  `json:"llm_explanation"`
-		} `json:"results"`
+	// decode response
+	var env llmResponseEnvelope
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		return nil, fmt.Errorf("llm decode error: %w", err)
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, fmt.Errorf("decode LLM error: %w", err)
-	}
-
-	results := make(map[uint]services.LLMResult, len(out.Results))
-	for _, r := range out.Results {
-		results[r.ID] = services.LLMResult{
+	// normalize
+	out := make(map[uint]services.LLMResult, len(env.Results))
+	for _, r := range env.Results {
+		out[r.ID] = services.LLMResult{
 			Verdict:     r.Verdict,
 			Confidence:  r.Confidence,
 			Explanation: r.Explanation,
 		}
 	}
 
-	return results, nil
+	return out, nil
 }

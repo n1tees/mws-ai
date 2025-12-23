@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"mws-ai/internal/models"
 	"mws-ai/internal/services"
@@ -18,47 +19,55 @@ type heuristicHTTP struct {
 func NewHeuristicClient(baseURL string) services.HeuristicClient {
 	return &heuristicHTTP{
 		baseURL: baseURL,
-		client:  &http.Client{},
+		client:  &http.Client{Timeout: 10 * time.Second},
 	}
 }
 
+// DTO
 type heuristicRequest struct {
 	ID       uint   `json:"id"`
 	FilePath string `json:"file_path"`
 	Value    string `json:"value"`
-	RuleID   string `json:"rule_id"`
-	Severity string `json:"severity"`
 }
 
 type heuristicResponse struct {
-	ID         uint     `json:"id"`
-	Verdict    string   `json:"verdict"` // TP / FP
-	Confidence float64  `json:"confidence"`
-	Reasons    []string `json:"reasons"`
+	ID                 uint    `json:"id"`
+	HeuristicTriggered bool    `json:"heuristic_triggered"`
+	HeuristicReason    *string `json:"heuristic_reason"`
+	Metrics            struct {
+		Entropy      *float64 `json:"entropy"`
+		Length       int      `json:"length"`
+		EntropyClass *string  `json:"entropy_class"`
+	} `json:"metrics"`
 }
+
+type heuristicResponseEnvelope struct {
+	Results []heuristicResponse `json:"results"`
+}
+
+// CLIENT
 
 func (h *heuristicHTTP) AnalyzeBatch(
 	findings []*models.Finding,
-) (map[uint]services.HeuristicResult, error) {
+) (map[uint]*services.HeuristicFacts, error) {
 
-	reqBody := make([]heuristicRequest, 0, len(findings))
+	// build request
+	req := make([]heuristicRequest, 0, len(findings))
 	for _, f := range findings {
-		reqBody = append(reqBody, heuristicRequest{
+		req = append(req, heuristicRequest{
 			ID:       f.ID,
 			FilePath: f.FilePath,
 			Value:    f.Value,
-			RuleID:   f.RuleID,
-			Severity: f.Severity,
 		})
 	}
 
-	payload, err := json.Marshal(reqBody)
+	payload, err := json.Marshal(req)
 	if err != nil {
 		return nil, err
 	}
 
 	resp, err := h.client.Post(
-		fmt.Sprintf("%s/analyze", h.baseURL),
+		h.baseURL,
 		"application/json",
 		bytes.NewReader(payload),
 	)
@@ -67,17 +76,23 @@ func (h *heuristicHTTP) AnalyzeBatch(
 	}
 	defer resp.Body.Close()
 
-	var res []heuristicResponse
-	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("heuristic returned status %d", resp.StatusCode)
+	}
+
+	var env heuristicResponseEnvelope
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
 		return nil, err
 	}
 
-	out := make(map[uint]services.HeuristicResult, len(res))
-	for _, r := range res {
-		out[r.ID] = services.HeuristicResult{
-			Verdict:    r.Verdict,
-			Confidence: r.Confidence,
-			Reasons:    r.Reasons,
+	out := make(map[uint]*services.HeuristicFacts, len(env.Results))
+	for _, r := range env.Results {
+
+		out[r.ID] = &services.HeuristicFacts{
+			HeuristicTriggered: r.HeuristicTriggered,
+			HeuristicReason:    r.HeuristicReason,
+			EntropyClass:       r.Metrics.EntropyClass,
+			EntropyValue:       r.Metrics.Entropy,
 		}
 	}
 
