@@ -66,7 +66,6 @@ func (h *UploadHandler) Upload() fiber.Handler {
 			Int64("size", file.Size).
 			Msg("file received")
 
-		// 🔥 гарантируем наличие директории
 		if err := os.MkdirAll(h.uploadDir, 0755); err != nil {
 			log.Error().
 				Err(err).

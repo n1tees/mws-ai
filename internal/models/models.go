@@ -1,6 +1,8 @@
 package models
 
-import "time"
+import (
+	"time"
+)
 
 type User struct {
 	ID           uint   `gorm:"primaryKey" json:"id"`
@@ -42,9 +44,10 @@ type Finding struct {
 	ScannerConfidence float64 `json:"scanner_confidence"`
 
 	// Heuristic results
-	HeuristicVerdict    *string  `json:"rule_verdict"`
-	HeuristicConfidence *float64 `json:"rule_confidence"`
-	HeuristicReasons    []string `gorm:"type:text[]" json:"heuristic_reasons"` // optional, можно оставить пустым
+	HeuristicTriggered bool     `json:"heuristic_triggered"`
+	HeuristicReason    *string  `json:"heuristic_reason,omitempty"`
+	EntropyClass       *string  `json:"entropy_class,omitempty"`
+	EntropyValue       *float64 `json:"entropy,omitempty"`
 
 	// ML results
 	MlVerdict    *string  `json:"ml_verdict"`
@@ -56,8 +59,8 @@ type Finding struct {
 	LlmExplanation *string  `json:"llm_explanation"`
 
 	// Final
-	FinalVerdict    *string  `json:"final_verdict"`
-	FinalConfidence *float64 `json:"final_confidence"`
+	FinalVerdict   *string `json:"final_verdict"`
+	DecisionSource string  `gorm:"type:varchar(25)" json:"decision_source"`
 
 	// Human review
 	HumanVerdict *string `json:"human_verdict"`

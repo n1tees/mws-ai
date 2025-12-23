@@ -38,8 +38,6 @@ func (h *AnalysisHandler) Get() fiber.Handler {
 			Str("path", c.Path()).
 			Logger()
 
-		log.Debug().Msg("get analysis request received")
-
 		idStr := c.Params("id")
 		id, err := strconv.Atoi(idStr)
 		if err != nil {
@@ -50,23 +48,18 @@ func (h *AnalysisHandler) Get() fiber.Handler {
 			return fiber.ErrBadRequest
 		}
 
-		log.Debug().
-			Uint("analysis_id", uint(id)).
-			Msg("analysis id parsed")
-
-		analysis, err := h.service.GetByID(uint(id))
-		if err != nil {
+		analysis, findings, err := h.service.GetDetails(uint(id))
+		if err != nil || analysis == nil {
 			log.Info().
-				Uint("analysis_id", uint(id)).
+				Int("analysis_id", id).
 				Msg("analysis not found")
 
 			return fiber.ErrNotFound
 		}
 
-		log.Info().
-			Uint("analysis_id", uint(id)).
-			Msg("analysis returned")
-
-		return c.JSON(analysis)
+		return c.JSON(fiber.Map{
+			"analysis": analysis,
+			"findings": findings,
+		})
 	}
 }
